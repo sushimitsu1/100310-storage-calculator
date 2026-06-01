@@ -436,7 +436,7 @@
     <h3>Checkout from PDF Transaction</h3>
     <div id="checkout-summary" style="font-size:13px;color:var(--text-muted);margin-bottom:12px"></div>
     <!-- Date selector -->
-    <div style="margin-bottom:12px;padding:11px 14px;background:var(--bg-secondary);border-radius:var(--radius);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div id="checkout-date-row" style="margin-bottom:12px;padding:11px 14px;background:var(--bg-secondary);border-radius:var(--radius);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span style="font-size:12px;font-weight:500">Checkout Date:</span>
       <input type="date" id="checkout-date-input" style="width:160px;height:30px" />
       <span style="font-size:11px;color:var(--text-muted)">(from PDF Confirm Date — change if needed)</span>
@@ -1060,57 +1060,63 @@ async function handleCheckoutPdf(e) {
 
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = '';
+
+    // Parse each page separately — each page = one transaction
+    const transactions = {}; // txnId → { confirmDate, palletIds }
+
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      fullText += content.items.map(item => item.str).join(' ') + '\n';
-    }
+      const text = content.items.map(item => item.str).join(' ');
 
-    // Extract Transaction ID
-    const txnMatch = fullText.match(/Transaction\s+ID\s+(\d+)/i);
-    const txnId = txnMatch ? txnMatch[1] : '';
+      // Extract Transaction ID
+      const txnMatch = text.match(/Transaction\s+ID\s+(\d+)/i);
+      if (!txnMatch) continue;
+      const txnId = txnMatch[1];
 
-    // Extract Confirm Date (e.g. "Confirm Date 5/12/2026 4:00:00 PM")
-    const confirmMatch = fullText.match(/Confirm\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
-    let confirmDate = '';
-    if (confirmMatch) {
-      const parts = confirmMatch[1].split('/');
-      confirmDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
-    }
-    // Fallback to Creation Date if no Confirm Date
-    if (!confirmDate) {
-      const creationMatch = fullText.match(/Creation\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
-      if (creationMatch) {
-        const parts = creationMatch[1].split('/');
+      // Extract Confirm Date
+      const confirmMatch = text.match(/Confirm\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+      let confirmDate = '';
+      if (confirmMatch) {
+        const parts = confirmMatch[1].split('/');
         confirmDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
+      } else {
+        // Fallback to Creation Date
+        const creationMatch = text.match(/Creation\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+        if (creationMatch) {
+          const parts = creationMatch[1].split('/');
+          confirmDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
+        }
+      }
+
+      // Extract pallet IDs on this page
+      const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
+      let pm;
+      if (!transactions[txnId]) transactions[txnId] = { confirmDate, palletIds: new Set() };
+      // Update confirm date if this page has one and previous didn't
+      if (confirmDate && !transactions[txnId].confirmDate) transactions[txnId].confirmDate = confirmDate;
+      while ((pm = palRe.exec(text)) !== null) {
+        transactions[txnId].palletIds.add(pm[1]);
       }
     }
 
-    // Extract pallet IDs
-    const seen = new Set();
-    const palletIds = [];
-    const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
-    let pm;
-    while ((pm = palRe.exec(fullText)) !== null) {
-      const id = pm[1];
-      if (!seen.has(id)) { seen.add(id); palletIds.push(id); }
-    }
+    if (!Object.keys(transactions).length) throw new Error('No transactions found in this PDF.');
 
-    if (!palletIds.length) throw new Error('No pallet IDs found in this document.');
-
-    // Match against existing pallets
-    checkoutRows = palletIds.map(id => {
-      const existing = pallets.find(p => String(p.id) === String(id));
-      let status, statusText, action;
-      if (!existing) { status = 'not-found'; statusText = 'Not in system'; action = 'Skip'; }
-      else if (existing.outDate) { status = 'already-out'; statusText = 'Already out: ' + existing.outDate; action = 'Skip'; }
-      else { status = 'ready'; statusText = 'In stock'; action = 'Check Out'; }
-      return { id, sku: existing?.sku || '—', description: existing?.description || '—', status, statusText, action };
+    // Build checkoutRows grouped by txn
+    checkoutRows = [];
+    Object.entries(transactions).forEach(([txnId, txn]) => {
+      [...txn.palletIds].forEach(id => {
+        const existing = pallets.find(p => String(p.id) === String(id));
+        let status, statusText, action;
+        if (!existing) { status = 'not-found'; statusText = 'Not in system'; action = 'Skip'; }
+        else if (existing.outDate) { status = 'already-out'; statusText = 'Already out: ' + existing.outDate; action = 'Skip'; }
+        else { status = 'ready'; statusText = 'In stock'; action = 'Check Out'; }
+        checkoutRows.push({ id, txnId, confirmDate: txn.confirmDate, sku: existing?.sku || '—', description: existing?.description || '—', status, statusText, action });
+      });
     });
 
     loadingEl.style.display = 'none';
-    showCheckoutModal(txnId, confirmDate, file.name);
+    showCheckoutModal(Object.keys(transactions).length, file.name, transactions);
 
   } catch(err) {
     loadingEl.style.display = 'none';
@@ -1118,52 +1124,85 @@ async function handleCheckoutPdf(e) {
   }
 }
 
-function showCheckoutModal(txnId, confirmDate, fileName) {
+function showCheckoutModal(txnCount, fileName, transactions) {
   const readyCount = checkoutRows.filter(r => r.status === 'ready').length;
   document.getElementById('checkout-summary').innerHTML =
-    `<strong>${fileName}</strong>${txnId ? ' &nbsp;·&nbsp; Txn #' + txnId : ''}<br>` +
-    `<strong>${checkoutRows.length}</strong> pallets in document &nbsp;·&nbsp; ` +
+    `<strong>${fileName}</strong><br>` +
+    `<strong>${txnCount}</strong> transaction${txnCount !== 1 ? 's' : ''} &nbsp;·&nbsp; <strong>${checkoutRows.length}</strong> pallets total &nbsp;·&nbsp; ` +
     `<strong style="color:var(--green-text)">${readyCount} will be checked out</strong>` +
     (checkoutRows.filter(r=>r.status==='already-out').length ? ` &nbsp;·&nbsp; <span style="color:var(--amber-text)">${checkoutRows.filter(r=>r.status==='already-out').length} already out</span>` : '') +
     (checkoutRows.filter(r=>r.status==='not-found').length ? ` &nbsp;·&nbsp; <span style="color:var(--red-text)">${checkoutRows.filter(r=>r.status==='not-found').length} not found</span>` : '');
 
-  document.getElementById('checkout-date-input').value = confirmDate || today();
   document.getElementById('checkout-confirm-btn').textContent = `Checkout ${readyCount} Pallet${readyCount !== 1 ? 's' : ''}`;
   document.getElementById('checkout-confirm-btn').disabled = readyCount === 0;
+
+  // Hide the single date input — each txn has its own date now
+  document.getElementById('checkout-date-row').style.display = 'none';
 
   const tbody = document.getElementById('checkout-body');
   tbody.innerHTML = '';
   const colors = { ready: 'var(--green-text)', 'already-out': 'var(--amber-text)', 'not-found': 'var(--red-text)' };
+
+  // Group rows by txnId for display
+  const grouped = {};
   checkoutRows.forEach(r => {
-    tbody.insertAdjacentHTML('beforeend', `<tr>
-      <td><strong>${r.id}</strong></td>
-      <td style="font-size:12px;color:var(--text-muted)">${r.sku}</td>
-      <td style="font-size:12px">${r.description}</td>
-      <td style="font-size:12px;color:${colors[r.status]}">${r.statusText}</td>
-      <td style="font-size:12px;font-weight:500;color:${colors[r.status]}">${r.action}</td>
-    </tr>`);
+    if (!grouped[r.txnId]) grouped[r.txnId] = [];
+    grouped[r.txnId].push(r);
+  });
+
+  Object.entries(grouped).forEach(([txnId, rows]) => {
+    const txnReady = rows.filter(r => r.status === 'ready').length;
+    const date = rows[0].confirmDate || '';
+    // Txn group header row with editable date
+    tbody.insertAdjacentHTML('beforeend', `
+      <tr style="background:var(--bg-tertiary)">
+        <td colspan="2" style="font-weight:600;padding:8px 10px">Txn #${txnId}</td>
+        <td colspan="2" style="font-size:12px;color:var(--text-muted)">${rows.length} pallets &nbsp;·&nbsp; <span style="color:var(--green-text)">${txnReady} ready</span></td>
+        <td style="padding:6px 10px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:11px;color:var(--text-muted)">Checkout date:</span>
+            <input type="date" value="${date}" onchange="updateTxnDate('${txnId}', this.value)"
+              style="height:26px;font-size:12px;padding:0 6px;border:1px solid var(--border-md);border-radius:4px;background:var(--bg);color:var(--text)" />
+          </div>
+        </td>
+      </tr>`);
+    rows.forEach(r => {
+      tbody.insertAdjacentHTML('beforeend', `<tr>
+        <td style="padding-left:20px"><strong>${r.id}</strong></td>
+        <td style="font-size:12px;color:var(--text-muted)">${r.sku}</td>
+        <td style="font-size:12px">${r.description}</td>
+        <td style="font-size:12px;color:${colors[r.status]}">${r.statusText}</td>
+        <td style="font-size:12px;font-weight:500;color:${colors[r.status]}">${r.action}</td>
+      </tr>`);
+    });
   });
 
   document.getElementById('checkout-modal').style.display = 'flex';
 }
 
+function updateTxnDate(txnId, newDate) {
+  checkoutRows.forEach(r => { if (r.txnId === txnId) r.confirmDate = newDate; });
+}
+
 function closeCheckoutModal() {
   document.getElementById('checkout-modal').style.display = 'none';
+  document.getElementById('checkout-date-row').style.display = 'flex';
   checkoutRows = [];
 }
 
 function confirmCheckoutPdf() {
-  const outDate = document.getElementById('checkout-date-input').value;
-  if (!outDate) { alert('Please select a checkout date'); return; }
   const toCheckout = checkoutRows.filter(r => r.status === 'ready');
+  // Validate all have dates
+  const missing = toCheckout.filter(r => !r.confirmDate);
+  if (missing.length) { alert('Please set a checkout date for all transactions.'); return; }
   toCheckout.forEach(r => {
     const p = pallets.find(x => String(x.id) === String(r.id));
-    if (p) p.outDate = outDate;
+    if (p) p.outDate = r.confirmDate;
   });
   closeCheckoutModal();
   renderPallets();
   saveData();
-  alert('✓ Checked out ' + toCheckout.length + ' pallet' + (toCheckout.length !== 1 ? 's' : '') + ' with date ' + outDate);
+  alert('✓ Checked out ' + toCheckout.length + ' pallet' + (toCheckout.length !== 1 ? 's' : '') + ' across ' + new Set(toCheckout.map(r=>r.txnId)).size + ' transactions.');
 }
 
 // ── PDF Import (client-side via PDF.js) ───────────────
