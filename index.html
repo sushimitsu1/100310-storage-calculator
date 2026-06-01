@@ -320,12 +320,14 @@
         oninput="renderPallets()"
         style="flex:1;height:38px;padding:0 12px;border:1px solid var(--border-md);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px" />
       <button class="btn btn-sm" onclick="document.getElementById('search-input').value='';renderPallets()" style="white-space:nowrap">✕ Clear</button>
+      <button class="btn btn-sm" id="collapse-all-btn" onclick="toggleAllGroups()" style="white-space:nowrap">▶ Collapse All</button>
     </div>
 
-    <!-- Bulk delete bar -->
+    <!-- Bulk action bar -->
     <div class="bulk-bar" id="bulk-bar">
       <span id="bulk-count">0 selected</span>
       <button class="btn btn-sm btn-danger" onclick="deleteSelected()">🗑 Delete Selected</button>
+      <button class="btn btn-sm" onclick="undoCheckoutSelected()" style="color:var(--amber-text);border-color:var(--amber-text)">↩ Undo Checkout</button>
       <button class="btn btn-sm" onclick="clearSelection()" style="margin-left:auto">Cancel</button>
     </div>
 
@@ -706,11 +708,46 @@ function deleteSelected() {
   saveData();
 }
 
+function toggleAllGroups() {
+  const btn = document.getElementById('collapse-all-btn');
+  const allGroupKeys = [...new Set(pallets.map(p => p.txn || '—'))];
+  const anyExpanded = allGroupKeys.some(k => !collapsedGroups.has(k));
+  if (anyExpanded) {
+    allGroupKeys.forEach(k => collapsedGroups.add(k));
+    btn.textContent = '▼ Expand All';
+  } else {
+    collapsedGroups.clear();
+    btn.textContent = '▶ Collapse All';
+  }
+  renderPallets();
+}
+
+function undoCheckoutSelected() {
+  if (!selectedIds.size) return;
+  const checkedOut = [...selectedIds].filter(id => {
+    const p = pallets.find(x => String(x.id) === String(id));
+    return p && p.outDate;
+  });
+  if (!checkedOut.length) { alert('None of the selected pallets have been checked out.'); return; }
+  if (!confirm('Undo checkout for ' + checkedOut.length + ' pallet' + (checkedOut.length !== 1 ? 's' : '') + '? Their out dates will be removed.')) return;
+  checkedOut.forEach(id => {
+    const p = pallets.find(x => String(x.id) === String(id));
+    if (p) p.outDate = null;
+  });
+  selectedIds.clear();
+  renderPallets();
+  saveData();
+}
+
 // ── Collapsed Txn groups ───────────────────────────────
 const collapsedGroups = new Set();
 
 function toggleGroup(txn) {
   collapsedGroups.has(txn) ? collapsedGroups.delete(txn) : collapsedGroups.add(txn);
+  // Update collapse all button label
+  const allGroupKeys = [...new Set(pallets.map(p => p.txn || '—'))];
+  const btn = document.getElementById('collapse-all-btn');
+  if (btn) btn.textContent = allGroupKeys.every(k => collapsedGroups.has(k)) ? '▼ Expand All' : '▶ Collapse All';
   renderPallets();
 }
 
