@@ -1130,12 +1130,32 @@ async function handleCheckoutPdf(e) {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
-    // Extract ALL text from all pages joined together
+    // Extract ALL text from all pages in proper reading order
+    // PDF.js returns items in stream order (not visual order), so we must
+    // sort by Y position (descending = top to bottom) then X (left to right)
     let fullText = '';
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      fullText += content.items.map(item => item.str).join(' ') + ' ';
+
+      // Group items by Y coordinate (rounded to handle sub-pixel variations)
+      const lineMap = {};
+      content.items.forEach(item => {
+        if (!item.str || !item.str.trim()) return;
+        const y = Math.round(item.transform[5] / 2) * 2; // round to 2px
+        const x = item.transform[4];
+        if (!lineMap[y]) lineMap[y] = [];
+        lineMap[y].push({ x, str: item.str });
+      });
+
+      // Sort lines top-to-bottom (higher Y = higher on page in PDF coords)
+      // Sort items within each line left-to-right
+      const sortedLines = Object.keys(lineMap)
+        .map(Number)
+        .sort((a, b) => b - a)
+        .map(y => lineMap[y].sort((a, b) => a.x - b.x).map(i => i.str).join(' '));
+
+      fullText += sortedLines.join('\n') + '\n';
     }
 
     // Find all Transaction ID positions in the full text
@@ -1311,27 +1331,48 @@ async function handlePdfUpload(e) {
     }
 
     // Read file as ArrayBuffer
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const arrayBuffer2 = await file.arrayBuffer();
+    const pdf2 = await pdfjsLib.getDocument({ data: arrayBuffer2 }).promise;
 
-    // Extract all text from all pages
+    // Extract text in proper reading order (sort by Y then X position)
     let fullText = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
+    for (let i = 1; i <= pdf2.numPages; i++) {
+      const page = await pdf2.getPage(i);
       const content = await page.getTextContent();
-      fullText += content.items.map(item => item.str).join(' ') + '\n';
+      const lineMap = {};
+      content.items.forEach(item => {
+        if (!item.str || !item.str.trim()) return;
+        const y = Math.round(item.transform[5] / 2) * 2;
+        const x = item.transform[4];
+        if (!lineMap[y]) lineMap[y] = [];
+        lineMap[y].push({ x, str: item.str });
+      });
+      const sortedLines = Object.keys(lineMap)
+        .map(Number)
+        .sort((a, b) => b - a)
+        .map(y => lineMap[y].sort((a, b) => a.x - b.x).map(i => i.str).join(' '));
+      fullText += sortedLines.join('\n') + '\n';
     }
 
     // Extract Transaction #
     const txnMatch = fullText.match(/Transaction\s*#\s*[:\-]?\s*(\d+)/i);
     const txnNumber = txnMatch ? txnMatch[1].trim() : '';
 
-    // Extract Creation Date (e.g. "Creation Date : 4/14/2026")
-    const dateMatch = fullText.match(/Creation\s+Date\s*[:\-]\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+    // Extract Creation Date — handle formats with or without colon/separator
+    // e.g. "Creation Date : 4/14/2026" or "Creation Date 4/14/2026"
+    const dateMatch = fullText.match(/Creation\s+Date\s*[:\-]?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
     let creationDate = '';
     if (dateMatch) {
       const parts = dateMatch[1].split('/');
       creationDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
+    }
+
+    // Detect if this looks like an outbound transaction file rather than a receiving report
+    const isOutbound = /Transaction\s+ID\s+\d+/i.test(fullText) && /Confirm\s+Date/i.test(fullText);
+    if (isOutbound) {
+      loadingEl.style.display = 'none';
+      if (!confirm('⚠️ This looks like an outbound transaction record, not a receiving report.\n\nTo check out pallets use the "📤 Checkout from PDF" button instead.\n\nClick OK to continue importing anyway, or Cancel to go back.')) return;
+      loadingEl.style.display = 'flex';
     }
 
     // Parse SKU sections: each SKU block owns the pallets that follow it
