@@ -331,6 +331,14 @@
       <button class="btn btn-sm" onclick="clearSelection()" style="margin-left:auto">Cancel</button>
     </div>
 
+    <!-- Quick select bar -->
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--text-muted)">Quick select:</span>
+      <button class="btn btn-sm" onclick="selectAllCheckedOut()" style="font-size:11px;color:var(--amber-text);border-color:var(--amber-text)">☑ All Checked Out</button>
+      <button class="btn btn-sm" onclick="selectAllInStock()" style="font-size:11px">☑ All In Stock</button>
+      <button class="btn btn-sm" onclick="clearSelection()" style="font-size:11px">☐ Deselect All</button>
+    </div>
+
     <div class="table-wrap" id="pallets-table-wrap" style="display:none">
       <table style="min-width:820px">
         <thead>
@@ -706,6 +714,30 @@ function deleteSelected() {
   selectedIds.clear();
   renderPallets();
   saveData();
+}
+
+function selectAllCheckedOut() {
+  // Expand all groups first so checkboxes are rendered
+  collapsedGroups.clear();
+  renderPallets();
+  // Then check all checked-out rows
+  selectedIds.clear();
+  pallets.forEach(p => { if (p.outDate) selectedIds.add(String(p.id)); });
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.checked = selectedIds.has(cb.dataset.id);
+  });
+  updateBulkBar();
+}
+
+function selectAllInStock() {
+  collapsedGroups.clear();
+  renderPallets();
+  selectedIds.clear();
+  pallets.forEach(p => { if (!p.outDate) selectedIds.add(String(p.id)); });
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.checked = selectedIds.has(cb.dataset.id);
+  });
+  updateBulkBar();
 }
 
 function toggleAllGroups() {
@@ -1098,48 +1130,57 @@ async function handleCheckoutPdf(e) {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
-    // Parse each page separately — each page = one transaction
-    const transactions = {}; // txnId → { confirmDate, palletIds }
-
+    // Extract ALL text from all pages joined together
+    let fullText = '';
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      const text = content.items.map(item => item.str).join(' ');
+      fullText += content.items.map(item => item.str).join(' ') + ' ';
+    }
 
-      // Extract Transaction ID
-      const txnMatch = text.match(/Transaction\s+ID\s+(\d+)/i);
-      if (!txnMatch) continue;
-      const txnId = txnMatch[1];
+    // Find all Transaction ID positions in the full text
+    const txnIdRe = /Transaction\s+ID\s+(\d+)/gi;
+    const txnPositions = [];
+    let m;
+    while ((m = txnIdRe.exec(fullText)) !== null) {
+      txnPositions.push({ txnId: m[1], pos: m.index });
+    }
 
-      // Extract Confirm Date
-      const confirmMatch = text.match(/Confirm\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+    if (!txnPositions.length) throw new Error('No Transaction IDs found in this PDF.');
+
+    // Slice text into per-transaction sections
+    const transactions = {};
+    txnPositions.forEach((t, i) => {
+      const start = t.pos;
+      const end = i + 1 < txnPositions.length ? txnPositions[i + 1].pos : fullText.length;
+      const section = fullText.slice(start, end);
+
+      // Extract Confirm Date from this section
+      const confirmMatch = section.match(/Confirm\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
       let confirmDate = '';
       if (confirmMatch) {
         const parts = confirmMatch[1].split('/');
         confirmDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
       } else {
         // Fallback to Creation Date
-        const creationMatch = text.match(/Creation\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+        const creationMatch = section.match(/Creation\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
         if (creationMatch) {
           const parts = creationMatch[1].split('/');
           confirmDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
         }
       }
 
-      // Extract pallet IDs on this page
+      // Extract pallet IDs from this section
       const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
       let pm;
-      if (!transactions[txnId]) transactions[txnId] = { confirmDate, palletIds: new Set() };
-      // Update confirm date if this page has one and previous didn't
-      if (confirmDate && !transactions[txnId].confirmDate) transactions[txnId].confirmDate = confirmDate;
-      while ((pm = palRe.exec(text)) !== null) {
-        transactions[txnId].palletIds.add(pm[1]);
+      if (!transactions[t.txnId]) transactions[t.txnId] = { confirmDate, palletIds: new Set() };
+      if (confirmDate && !transactions[t.txnId].confirmDate) transactions[t.txnId].confirmDate = confirmDate;
+      while ((pm = palRe.exec(section)) !== null) {
+        transactions[t.txnId].palletIds.add(pm[1]);
       }
-    }
+    });
 
-    if (!Object.keys(transactions).length) throw new Error('No transactions found in this PDF.');
-
-    // Build checkoutRows grouped by txn
+    // Build checkoutRows
     checkoutRows = [];
     Object.entries(transactions).forEach(([txnId, txn]) => {
       [...txn.palletIds].forEach(id => {
@@ -1151,6 +1192,8 @@ async function handleCheckoutPdf(e) {
         checkoutRows.push({ id, txnId, confirmDate: txn.confirmDate, sku: existing?.sku || '—', description: existing?.description || '—', status, statusText, action });
       });
     });
+
+    if (!checkoutRows.length) throw new Error('No pallet IDs found in this PDF.');
 
     loadingEl.style.display = 'none';
     showCheckoutModal(Object.keys(transactions).length, file.name, transactions);
