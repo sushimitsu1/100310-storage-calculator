@@ -538,6 +538,7 @@ function daysBetween(a, b) { return Math.floor((new Date(b) - new Date(a)) / 864
 function freeEnd(d) { const x = new Date(d); x.setDate(x.getDate() + FREE_DAYS - 1); return x.toISOString().split('T')[0]; }
 function calcBillDays(inDate, toDate) { return Math.max(0, daysBetween(inDate, toDate) - (FREE_DAYS - 1)); }
 function subtractOneDay(d) { const x = new Date(d); x.setDate(x.getDate() - 1); return x.toISOString().split('T')[0]; }
+function addOneDay(d) { const x = new Date(d); x.setDate(x.getDate() + 1); return x.toISOString().split('T')[0]; }
 function fmtFee(days) { return '$' + (days * RATE).toFixed(2); }
 
 // ── Sync Status ────────────────────────────────────────
@@ -955,17 +956,30 @@ function generateReport() {
   let total = 0, newIn = 0, wentOut = 0, stillIn = 0;
 
   pallets.forEach(p => {
-    if (p.inDate > monthEnd) return;
-    if (p.outDate && p.outDate < monthStart) return;
-    const endDate = p.outDate && p.outDate <= monthEnd ? subtractOneDay(p.outDate) : monthEnd;
-    const billDays = calcBillDays(p.inDate, endDate);
+    if (p.inDate > monthEnd) return; // not arrived yet
+    if (p.outDate && p.outDate <= monthStart) return; // left before month started
+
+    const fe = freeEnd(p.inDate); // last free day
+    const palletBillStart = addOneDay(fe); // first billing day ever
+
+    // Billing window within this month
+    const monthBillStart = palletBillStart >= monthStart ? palletBillStart : monthStart;
+    const outInMonth = p.outDate && p.outDate <= monthEnd;
+    const monthBillEnd = outInMonth ? subtractOneDay(p.outDate) : monthEnd;
+
+    // Bill days = 0 if still in free period for whole month
+    const billDays = monthBillStart <= monthBillEnd
+      ? daysBetween(monthBillStart, monthBillEnd) + 1
+      : 0;
     const fee = billDays * RATE;
     total += fee;
+
     const isNewThisMonth = p.inDate >= monthStart && p.inDate <= monthEnd;
-    const outThisMonth = p.outDate && p.outDate >= monthStart && p.outDate <= monthEnd;
     if (isNewThisMonth) newIn++;
-    if (outThisMonth) wentOut++; else stillIn++;
-    rows.push({ ...p, billDays, fee, isNewThisMonth, outThisMonth });
+    if (outInMonth) wentOut++; else stillIn++;
+
+    // For display: show actual outDate only if it's within the month
+    rows.push({ ...p, billDays, fee, isNewThisMonth, outThisMonth: outInMonth, displayOut: outInMonth ? p.outDate : null });
   });
 
   lastReportRows = rows;
@@ -1017,7 +1031,7 @@ function generateReport() {
     lines.push('  ' + col('Moveable ID', 14) + col('Txn #', 10) + col('In Date', 12) + col('Out Date', 12) + col('Bill Days', 11) + 'Fee');
     lines.push('  ' + '·'.repeat(W));
     grp.rows.forEach(r => {
-      const outStr = r.outDate || '在库中';
+      const outStr = r.displayOut || '在库中';
       const feeStr = r.fee > 0 ? '$' + r.fee.toFixed(2) : '免租中';
       lines.push('  ' + col(r.id, 14) + col(r.txn || '—', 10) + col(r.inDate, 12) + col(outStr, 12) + col(r.billDays > 0 ? r.billDays + ' 天' : '—', 11) + feeStr);
     });
@@ -1071,10 +1085,10 @@ function exportReportExcel() {
   const sorted = [...lastReportRows].sort((a,b) => (a.sku||'').localeCompare(b.sku||'') || String(a.id).localeCompare(String(b.id)));
   sorted.forEach(r => {
     const fe = freeEnd(r.inDate);
-    let status = r.outDate ? 'Out' : (new Date() <= new Date(fe) ? 'Free' : 'Billing');
+    let status = r.displayOut ? 'Out' : (new Date() <= new Date(fe) ? 'Free' : 'Billing');
     detailData.push([
       r.sku || '', r.description || '', r.id, r.txn || '',
-      r.inDate, fe, r.outDate || '',
+      r.inDate, fe, r.displayOut || '',
       r.billDays, parseFloat(r.fee.toFixed(2)), status
     ]);
   });
