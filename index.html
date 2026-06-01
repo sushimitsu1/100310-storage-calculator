@@ -1369,75 +1369,102 @@ async function handlePdfUpload(e) {
       fullText += sortedLines.join('\n') + '\n';
     }
 
-    // Extract Transaction #
-    const txnMatch = fullText.match(/Transaction\s*#\s*[:\-]?\s*(\d+)/i);
-    const txnNumber = txnMatch ? txnMatch[1].trim() : '';
+    // Detect format: "View Transaction" (new inbound format) vs "Receive Summary Ticket" (old format)
+    const isViewTransaction = /View\s+Transaction/i.test(fullText) && /Transaction\s+ID\s+\d+/i.test(fullText);
 
-    // Extract Creation Date — handle formats with or without colon/separator
-    // e.g. "Creation Date : 4/14/2026" or "Creation Date 4/14/2026"
-    const dateMatch = fullText.match(/Creation\s+Date\s*[:\-]?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
-    let creationDate = '';
-    if (dateMatch) {
-      const parts = dateMatch[1].split('/');
-      creationDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
-    }
+    if (isViewTransaction) {
+      // ── View Transaction format: per-txn with Confirm Date as In Date ──
+      const txnIdRe = /Transaction\s+ID\s+(\d+)/gi;
+      const txnPositions = [];
+      let tm;
+      while ((tm = txnIdRe.exec(fullText)) !== null) {
+        txnPositions.push({ txnId: tm[1], pos: tm.index });
+      }
+      if (!txnPositions.length) throw new Error('No Transaction IDs found in this PDF.');
 
-    // Detect if this looks like an outbound transaction file rather than a receiving report
-    const isOutbound = /Transaction\s+ID\s+\d+/i.test(fullText) && /Confirm\s+Date/i.test(fullText);
-    if (isOutbound) {
+      importRows = [];
+      const globalSeen = new Set();
+
+      txnPositions.forEach((t, i) => {
+        const section = fullText.slice(t.pos, i + 1 < txnPositions.length ? txnPositions[i + 1].pos : fullText.length);
+
+        // Use Confirm Date as the In Date (actual receiving date)
+        const confirmMatch = section.match(/Confirm\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+        let inDate = '';
+        if (confirmMatch) {
+          const parts = confirmMatch[1].split('/');
+          inDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
+        }
+
+        // Find SKU positions in this section
+        const skuHits2 = [];
+        const skuRe2 = /(\d{4,8}-\d{2,4})\s+([\s\S]{5,300}?)\s+(?:\d+\.?\d*\s+)?Pallet/g;
+        let sm2;
+        while ((sm2 = skuRe2.exec(section)) !== null) {
+          skuHits2.push({ pos: sm2.index, sku: sm2[1].trim(), description: sm2[2].replace(/\s+/g, ' ').replace(/\s*\(\d+\)\s*$/, '').trim() });
+        }
+
+        // Find pallet IDs in this section
+        const palRe2 = /(?:Loc:[^\n]*)?\s*Pallet\s*[:\-]?\s*(\d{4,6})/gi;
+        let pm2;
+        while ((pm2 = palRe2.exec(section)) !== null) {
+          const id = pm2[1];
+          if (globalSeen.has(id)) continue;
+          globalSeen.add(id);
+          const parentSku = [...skuHits2].reverse().find(s => s.pos < pm2.index);
+          let status = 'ok', statusText = '✓ Ready';
+          if (!inDate) { status = 'err'; statusText = '✗ Confirm Date not found'; }
+          else if (pallets.find(p => String(p.id) === String(id))) { status = 'dup'; statusText = '⚠ Duplicate ID'; }
+          importRows.push({ id, inDate, txn: t.txnId, sku: parentSku?.sku || '', description: parentSku?.description || '', status, statusText });
+        }
+      });
+
+      if (!importRows.length) throw new Error('No pallet IDs found in this PDF.');
       loadingEl.style.display = 'none';
-      if (!confirm('⚠️ This looks like an outbound transaction record, not a receiving report.\n\nTo check out pallets use the "📤 Checkout from PDF" button instead.\n\nClick OK to continue importing anyway, or Cancel to go back.')) return;
-      loadingEl.style.display = 'flex';
+      showImportModal(`View Transaction PDF · ${txnPositions.length} txn(s) · ${importRows.length} pallets · Confirm Date used as In Date`, true, importRows[0]?.inDate || '');
+
+    } else {
+      // ── Receive Summary Ticket format ──
+      const txnMatch = fullText.match(/Transaction\s*#\s*[:\-]?\s*(\d+)/i);
+      const txnNumber = txnMatch ? txnMatch[1].trim() : '';
+      const dateMatch = fullText.match(/Creation\s+Date\s*[:\-]?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+      let creationDate = '';
+      if (dateMatch) {
+        const parts = dateMatch[1].split('/');
+        creationDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
+      }
+
+      const skuHits = [];
+      const skuRe = /(\d{4,8}-\d{2,4})\s+([\s\S]{5,300}?)\s+Pallet\s+\d+\s/g;
+      let sm;
+      while ((sm = skuRe.exec(fullText)) !== null) {
+        skuHits.push({ pos: sm.index, sku: sm[1].trim(), description: sm[2].replace(/\s+/g, ' ').replace(/\s*\(\d+\)\s*$/, '').trim() });
+      }
+      const palletHits = [];
+      const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
+      let pm;
+      while ((pm = palRe.exec(fullText)) !== null) palletHits.push({ pos: pm.index, id: pm[1] });
+
+      const skuMap = {};
+      palletHits.forEach(ph => {
+        const parentSku = [...skuHits].reverse().find(s => s.pos < ph.pos);
+        skuMap[ph.id] = parentSku ? { sku: parentSku.sku, description: parentSku.description } : { sku: '', description: '' };
+      });
+      const seen = new Set();
+      const palletIds = [];
+      for (const ph of palletHits) { if (!seen.has(ph.id)) { seen.add(ph.id); palletIds.push(ph.id); } }
+      if (!palletIds.length) throw new Error('No pallet IDs found. Make sure this is a Receive Summary Ticket.');
+
+      importRows = palletIds.map(id => {
+        const meta = skuMap[id] || { sku: '', description: '' };
+        let status = 'ok', statusText = '✓ Ready';
+        if (!creationDate) { status = 'err'; statusText = '✗ Date not found'; }
+        else if (pallets.find(p => p.id === id)) { status = 'dup'; statusText = '⚠ Duplicate ID'; }
+        return { id, inDate: creationDate, txn: txnNumber, sku: meta.sku, description: meta.description, status, statusText };
+      });
+      loadingEl.style.display = 'none';
+      showImportModal(`PDF: ${file.name}  ·  Txn #${txnNumber || '?'}  ·  ${palletIds.length} pallets`, true, creationDate);
     }
-
-    // Parse SKU sections: each SKU block owns the pallets that follow it
-    // SKU pattern: digits-digits (e.g. 12120-164)
-    // We split the text into segments by SKU lines and extract pallets per segment
-    const skuPattern = /(\d{4,6}-\d{3,4})\s+(.*?)(?=\s+Pallet\s+\d)/gi;
-    const skuMap = {}; // palletId → { sku, description }
-
-    // Find all SKU positions in text — allow up to 300 chars for long multiline descriptions
-    const skuHits = [];
-    const skuRe = /(\d{4,8}-\d{2,4})\s+([\s\S]{5,300}?)\s+Pallet\s+\d+\s/g;
-    let sm;
-    while ((sm = skuRe.exec(fullText)) !== null) {
-      skuHits.push({ pos: sm.index, sku: sm[1].trim(), description: sm[2].replace(/\s+/g, ' ').replace(/\s*\(\d+\)\s*$/, '').trim() });
-    }
-
-    // Find all pallet ID positions
-    const palletHits = [];
-    const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
-    let pm;
-    while ((pm = palRe.exec(fullText)) !== null) {
-      palletHits.push({ pos: pm.index, id: pm[1] });
-    }
-
-    // Assign each pallet to the most recent SKU that appears before it
-    palletHits.forEach(ph => {
-      const parentSku = [...skuHits].reverse().find(s => s.pos < ph.pos);
-      skuMap[ph.id] = parentSku ? { sku: parentSku.sku, description: parentSku.description } : { sku: '', description: '' };
-    });
-
-    // Deduplicate pallet IDs preserving order
-    const seen = new Set();
-    const palletIds = [];
-    for (const ph of palletHits) {
-      if (!seen.has(ph.id)) { seen.add(ph.id); palletIds.push(ph.id); }
-    }
-
-    if (!palletIds.length) throw new Error('No pallet IDs found. Make sure this is a Receive Summary Ticket.');
-
-    // Build importRows
-    importRows = palletIds.map(id => {
-      const meta = skuMap[id] || { sku: '', description: '' };
-      let status = 'ok', statusText = '✓ Ready';
-      if (!creationDate) { status = 'err'; statusText = '✗ Date not found'; }
-      else if (pallets.find(p => p.id === id)) { status = 'dup'; statusText = '⚠ Duplicate ID'; }
-      return { id, inDate: creationDate, txn: txnNumber, sku: meta.sku, description: meta.description, status, statusText };
-    });
-
-    loadingEl.style.display = 'none';
-    showImportModal(`PDF: ${file.name}  ·  Txn #${txnNumber || '?'}  ·  ${palletIds.length} pallets`, true, creationDate);
 
   } catch (err) {
     loadingEl.style.display = 'none';
