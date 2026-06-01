@@ -855,7 +855,7 @@ function renderPallets() {
     if (!isCollapsed) {
       group.forEach(p => {
         const fe = freeEnd(p.inDate);
-        const endRef = p.outDate ? subtractOneDay(p.outDate) : ref;
+        const endRef = p.outDate || ref;
         const daysIn = daysBetween(p.inDate, endRef) + 1;
         const billDays = calcBillDays(p.inDate, endRef);
         const fee = billDays * RATE;
@@ -902,7 +902,7 @@ function renderBilling() {
   let total = 0, inFree = 0, inBill = 0, outCount = 0;
   pallets.forEach(p => {
     const fe = freeEnd(p.inDate);
-    const endDate = p.outDate && p.outDate < cutoff ? subtractOneDay(p.outDate) : cutoff;
+    const endDate = p.outDate && p.outDate < cutoff ? p.outDate : cutoff;
     const billDays = calcBillDays(p.inDate, endDate);
     const fee = billDays * RATE;
     total += fee;
@@ -965,7 +965,7 @@ function generateReport() {
     // Billing window within this month
     const monthBillStart = palletBillStart >= monthStart ? palletBillStart : monthStart;
     const outInMonth = p.outDate && p.outDate <= monthEnd;
-    const monthBillEnd = outInMonth ? subtractOneDay(p.outDate) : monthEnd;
+    const monthBillEnd = outInMonth ? p.outDate : monthEnd; // include pickup day
 
     // Bill days = 0 if still in free period for whole month
     const billDays = monthBillStart <= monthBillEnd
