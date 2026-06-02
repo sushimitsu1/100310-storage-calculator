@@ -1421,7 +1421,7 @@ async function handlePdfUpload(e) {
 
       if (!importRows.length) throw new Error('No pallet IDs found in this PDF.');
       loadingEl.style.display = 'none';
-      showImportModal(`View Transaction PDF · ${txnPositions.length} txn(s) · ${importRows.length} pallets · Confirm Date used as In Date`, true, importRows[0]?.inDate || '');
+      showImportModal(`View Transaction PDF · ${txnPositions.length} txn(s) · ${importRows.length} pallets · Confirm Date used as In Date`, false, '');
 
     } else {
       // ── Receive Summary Ticket format ──
