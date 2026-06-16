@@ -320,6 +320,7 @@
         oninput="renderPallets()"
         style="flex:1;height:38px;padding:0 12px;border:1px solid var(--border-md);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px" />
       <button class="btn btn-sm" onclick="document.getElementById('search-input').value='';renderPallets()" style="white-space:nowrap">✕ Clear</button>
+      <button class="btn btn-sm" id="instock-toggle" onclick="toggleInStockOnly()" style="white-space:nowrap">📦 In Stock Only</button>
       <button class="btn btn-sm" id="collapse-all-btn" onclick="toggleAllGroups()" style="white-space:nowrap">▶ Collapse All</button>
     </div>
 
@@ -742,6 +743,26 @@ function selectAllInStock() {
   updateBulkBar();
 }
 
+let inStockOnly = false;
+
+function toggleInStockOnly() {
+  inStockOnly = !inStockOnly;
+  const btn = document.getElementById('instock-toggle');
+  if (inStockOnly) {
+    btn.style.background = 'var(--green-text)';
+    btn.style.color = 'var(--bg)';
+    btn.style.borderColor = 'var(--green-text)';
+    btn.textContent = '📦 In Stock Only ✓';
+    collapsedGroups.clear(); // expand all so pallets are visible
+  } else {
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    btn.textContent = '📦 In Stock Only';
+  }
+  renderPallets();
+}
+
 function toggleAllGroups() {
   const btn = document.getElementById('collapse-all-btn');
   const allGroupKeys = [...new Set(pallets.map(p => p.txn || '—'))];
@@ -798,16 +819,20 @@ function renderPallets() {
   if (sa) sa.checked = false;
 
   const q = (document.getElementById('search-input')?.value || '').toLowerCase().trim();
-  const filtered = q ? pallets.filter(p =>
+  let filtered = q ? pallets.filter(p =>
     String(p.id).toLowerCase().includes(q) ||
     (p.sku || '').toLowerCase().includes(q) ||
     (p.txn || '').toLowerCase().includes(q) ||
     (p.description || '').toLowerCase().includes(q)
   ) : pallets;
 
+  if (inStockOnly) filtered = filtered.filter(p => !p.outDate);
+
   if (!filtered.length) {
     empty.style.display = 'block';
-    empty.innerHTML = q ? `<div class="empty-icon">🔍</div><p>No results for "<strong>${q}</strong>"</p>` : '<div class="empty-icon">📦</div><p>No pallet records yet</p>';
+    empty.innerHTML = (q || inStockOnly)
+      ? `<div class="empty-icon">🔍</div><p>No results${q ? ` for "<strong>${q}</strong>"` : ''}${inStockOnly ? ' (In Stock Only active)' : ''}</p>`
+      : '<div class="empty-icon">📦</div><p>No pallet records yet</p>';
     wrap.style.display = 'none'; return;
   }
   empty.style.display = 'none'; wrap.style.display = 'block';
@@ -823,7 +848,7 @@ function renderPallets() {
 
   groupOrder.forEach(txn => {
     const group = groups[txn];
-    const isCollapsed = collapsedGroups.has(txn) && !q; // always expand when searching
+    const isCollapsed = collapsedGroups.has(txn) && !q && !inStockOnly;
     let groupFee = 0, inFree = 0, inBill = 0, outCount = 0;
     group.forEach(p => {
       const bd = calcBillDays(p.inDate, p.outDate || ref);
