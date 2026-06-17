@@ -719,6 +719,18 @@ function deleteSelected() {
   saveData();
 }
 
+function selectTxnGroup(txn) {
+  // Expand the group first so checkboxes are rendered
+  collapsedGroups.delete(txn);
+  renderPallets();
+  // Then select all pallets in this txn group
+  pallets.filter(p => (p.txn || '—') === txn).forEach(p => selectedIds.add(String(p.id)));
+  document.querySelectorAll('.row-check').forEach(cb => {
+    if (selectedIds.has(cb.dataset.id)) cb.checked = true;
+  });
+  updateBulkBar();
+}
+
 function selectAllCheckedOut() {
   // Expand all groups first so checkboxes are rendered
   collapsedGroups.clear();
@@ -872,9 +884,11 @@ function renderPallets() {
           <span style="font-size:12px;color:var(--text-muted);margin-left:8px">${group.length} pallet${group.length !== 1 ? 's' : ''}</span>
         </td>
         <td colspan="2" style="font-size:12px">${statusParts}</td>
-        <td colspan="5"></td>
+        <td colspan="4"></td>
         <td style="font-size:13px;font-weight:500">${groupFee > 0 ? `<span class="fee">$${groupFee.toFixed(2)}</span>` : '<span class="fee-zero">$0.00</span>'}</td>
-        <td><span style="font-size:11px;color:var(--text-muted)">${isCollapsed ? '▶ expand' : '▼ collapse'}</span></td>
+        <td>
+          <button class="btn btn-sm" onclick="event.stopPropagation();selectTxnGroup('${txn.replace(/'/g,"\\'")}')" style="font-size:11px;white-space:nowrap">☑ Select All</button>
+        </td>
       </tr>`);
 
     if (!isCollapsed) {
@@ -1465,10 +1479,31 @@ async function handlePdfUpload(e) {
       while ((sm = skuRe.exec(fullText)) !== null) {
         skuHits.push({ pos: sm.index, sku: sm[1].trim(), description: sm[2].replace(/\s+/g, ' ').replace(/\s*\(\d+\)\s*$/, '').trim() });
       }
+
+      // Primary: standard "Pallet: XXXXX" pattern
       const palletHits = [];
       const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
       let pm;
       while ((pm = palRe.exec(fullText)) !== null) palletHits.push({ pos: pm.index, id: pm[1] });
+
+      // Secondary: catch "Loc:" format where pallet number appears on its own line
+      // Lines that are ONLY a 5-6 digit number after a Details: Loc: context
+      const lines = fullText.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (/^\d{4,6}$/.test(trimmed)) {
+          // Check if any of the 4 preceding lines contain "Loc:" (indicates Loc: pallet format)
+          const prevCtx = lines.slice(Math.max(0, i-4), i).join(' ');
+          if (/Loc:/i.test(prevCtx) || /Details:/i.test(prevCtx)) {
+            const id = trimmed;
+            // Find approximate position in fullText for SKU association
+            const approxPos = fullText.indexOf('\n' + id + '\n') !== -1
+              ? fullText.indexOf('\n' + id + '\n')
+              : fullText.indexOf(id);
+            palletHits.push({ pos: approxPos, id });
+          }
+        }
+      }
 
       const skuMap = {};
       palletHits.forEach(ph => {
