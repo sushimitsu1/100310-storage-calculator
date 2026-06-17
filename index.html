@@ -424,15 +424,19 @@
         <input type="date" id="import-date-override" style="width:155px;height:30px" oninput="updateImportDates()" />
       </div>
     </div>
+    <div id="import-missing-panel" style="display:none;margin-bottom:12px;padding:12px 14px;background:var(--red-bg);border-radius:var(--radius);border:0.5px solid var(--red-text)">
+      <div style="font-size:13px;color:var(--red-text);font-weight:500;margin-bottom:8px">
+        ⚠️ <span id="import-missing-msg"></span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Paste the missing Moveable IDs below (comma, space, or new line separated):</div>
+      <textarea id="import-missing-input" rows="3" placeholder="e.g. 26235, 26236, 26237" oninput="addMissingIds()"
+        style="width:100%;padding:8px;border:1px solid var(--border-md);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:13px;resize:vertical"></textarea>
+    </div>
     <div class="import-table-wrap">
       <table class="import-table">
         <thead><tr><th>#</th><th>Moveable ID</th><th>In Date</th><th>Txn #</th><th>SKU</th><th>Item Description</th><th>Status</th></tr></thead>
         <tbody id="import-body"></tbody>
       </table>
-    </div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5">
-      <span style="display:inline-block;width:10px;height:10px;background:var(--amber-bg);border-radius:2px;margin-right:4px"></span>Orange = duplicate ID (will be skipped) &nbsp;
-      <span style="display:inline-block;width:10px;height:10px;background:var(--red-bg);border-radius:2px;margin-right:4px"></span>Red = invalid row (will be skipped)
     </div>
     <div class="modal-footer">
       <button class="btn btn-sm" onclick="closeImportModal()">Cancel</button>
@@ -1515,6 +1519,10 @@ async function handlePdfUpload(e) {
       for (const ph of palletHits) { if (!seen.has(ph.id)) { seen.add(ph.id); palletIds.push(ph.id); } }
       if (!palletIds.length) throw new Error('No pallet IDs found. Make sure this is a Receive Summary Ticket.');
 
+      // Check expected total from "Totals: XX" line in PDF
+      const totalsMatch = fullText.match(/Totals\s*[:\-]?\s*(\d+)/i);
+      const expectedTotal = totalsMatch ? parseInt(totalsMatch[1]) : null;
+
       importRows = palletIds.map(id => {
         const meta = skuMap[id] || { sku: '', description: '' };
         let status = 'ok', statusText = '✓ Ready';
@@ -1523,7 +1531,7 @@ async function handlePdfUpload(e) {
         return { id, inDate: creationDate, txn: txnNumber, sku: meta.sku, description: meta.description, status, statusText };
       });
       loadingEl.style.display = 'none';
-      showImportModal(`PDF: ${file.name}  ·  Txn #${txnNumber || '?'}  ·  ${palletIds.length} pallets`, true, creationDate);
+      showImportModal(`PDF: ${file.name}  ·  Txn #${txnNumber || '?'}  ·  ${palletIds.length} pallets`, true, creationDate, expectedTotal, txnNumber, creationDate);
     }
 
   } catch (err) {
@@ -1592,24 +1600,38 @@ function parseImportRows(rows) {
   showImportModal(`Excel: ${importRows.length} rows parsed`, false);
 }
 
-function showImportModal(subtitle, isPdf, pdfDate) {
+let importMeta = { txn: '', inDate: '', sku: '', description: '' };
+
+function showImportModal(subtitle, isPdf, pdfDate, expectedTotal, defaultTxn, defaultInDate) {
+  importMeta = { txn: defaultTxn || '', inDate: defaultInDate || pdfDate || '', sku: '', description: '' };
+
   const tbody = document.getElementById('import-body');
   tbody.innerHTML = '';
   const valid = importRows.filter(r => r.status === 'ok').length;
   const dup = importRows.filter(r => r.status === 'dup').length;
   const err = importRows.filter(r => r.status === 'err').length;
 
-  // Title
   document.getElementById('import-modal-title').textContent = isPdf ? 'Import from PDF Receipt' : 'Import from Excel';
-
-  // Summary
   document.getElementById('import-summary').innerHTML =
     (subtitle ? `<div style="font-size:11px;color:var(--text-hint);margin-bottom:6px">${subtitle}</div>` : '') +
     `<strong>${importRows.length}</strong> pallets found &nbsp;·&nbsp; <strong style="color:var(--green-text)">${valid} ready to import</strong>` +
     (dup ? ` &nbsp;·&nbsp; <span style="color:var(--amber-text)">${dup} duplicates</span>` : '') +
     (err ? ` &nbsp;·&nbsp; <span style="color:var(--red-text)">${err} invalid</span>` : '');
 
-  // Date override row — only for PDF imports
+  // Show mismatch warning if expected total doesn't match
+  const missingPanel = document.getElementById('import-missing-panel');
+  const missingInput = document.getElementById('import-missing-input');
+  if (expectedTotal && importRows.length < expectedTotal) {
+    const missing = expectedTotal - importRows.length;
+    document.getElementById('import-missing-msg').textContent =
+      `PDF shows ${expectedTotal} pallets but only ${importRows.length} were detected — ${missing} missing.`;
+    missingPanel.style.display = 'block';
+    missingInput.value = '';
+  } else {
+    missingPanel.style.display = 'none';
+  }
+
+  // Date override row — only for single-date PDF imports
   const dateRow = document.getElementById('import-date-row');
   if (isPdf && pdfDate) {
     document.getElementById('import-pdf-date').textContent = pdfDate;
@@ -1623,6 +1645,23 @@ function showImportModal(subtitle, isPdf, pdfDate) {
   document.getElementById('import-confirm-btn').disabled = valid === 0;
   renderImportRows();
   document.getElementById('import-modal').style.display = 'flex';
+}
+
+function addMissingIds() {
+  const input = document.getElementById('import-missing-input').value;
+  // Parse IDs: split by comma, space, newline
+  const ids = input.split(/[\s,\n]+/).map(s => s.trim()).filter(s => /^\d{4,6}$/.test(s));
+  // Re-render with current importRows + any new IDs added as previews
+  // Update the summary to show how many will be added
+  const newCount = ids.filter(id => !importRows.find(r => r.id === id) && !pallets.find(p => String(p.id) === id)).length;
+  const dupCount = ids.filter(id => pallets.find(p => String(p.id) === id)).length;
+  const msg = document.getElementById('import-missing-msg');
+  const base = msg.textContent.split('—')[0].trim();
+  if (ids.length > 0) {
+    msg.textContent = base + ` — ${newCount} new IDs ready, ${dupCount} duplicates`;
+  }
+  // Store for use in confirmImport
+  window._missingIds = ids;
 }
 
 function renderImportRows() {
@@ -1665,10 +1704,20 @@ function closeImportModal() {
 
 async function confirmImport() {
   const toAdd = importRows.filter(r => r.status === 'ok');
+
+  // Also add any manually entered missing IDs
+  const missingIds = (window._missingIds || []).filter(id =>
+    !importRows.find(r => r.id === id) && !pallets.find(p => String(p.id) === id)
+  );
+  missingIds.forEach(id => {
+    toAdd.push({ id, inDate: importMeta.inDate, txn: importMeta.txn, sku: '', description: '' });
+  });
+
   if (!toAdd.length) return;
   toAdd.forEach(r => {
     pallets.push({ id: String(r.id), inDate: r.inDate, txn: r.txn || '', sku: r.sku || '', description: r.description || '', outDate: null, addedAt: new Date().toISOString() });
   });
+  window._missingIds = [];
   closeImportModal();
   renderPallets();
   saveData();
