@@ -1104,42 +1104,83 @@ function generateReport() {
 function exportReportExcel() {
   if (!lastReportRows.length) { alert('请先生成报告'); return; }
   const wb = XLSX.utils.book_new();
+  const monthLabel = lastReportMonth;
 
-  // Sheet 1: Summary by SKU
-  const summaryData = [['SKU', 'Item Description', 'Pallets', 'Bill Days Total', 'Total Fee']];
+  // ── Sheet 1: Summary by SKU ────────────────────────────
+  const summaryData = [['SKU', 'Item Description', 'Total Pallets', 'In Stock', 'Checked Out', 'Bill Days Total', 'Total Fee ($)']];
   const skuMap = {};
   lastReportRows.forEach(r => {
     const key = r.sku || '(No SKU)';
-    if (!skuMap[key]) skuMap[key] = { description: r.description || '', pallets: 0, billDays: 0, fee: 0 };
+    if (!skuMap[key]) skuMap[key] = { description: r.description || '', pallets: 0, inStock: 0, out: 0, billDays: 0, fee: 0 };
     skuMap[key].pallets++;
     skuMap[key].billDays += r.billDays;
     skuMap[key].fee += r.fee;
+    if (r.displayOut) skuMap[key].out++; else skuMap[key].inStock++;
   });
   Object.entries(skuMap).forEach(([sku, v]) => {
-    summaryData.push([sku, v.description, v.pallets, v.billDays, parseFloat(v.fee.toFixed(2))]);
+    summaryData.push([sku, v.description, v.pallets, v.inStock, v.out, v.billDays, parseFloat(v.fee.toFixed(2))]);
   });
-  summaryData.push(['', '', '', 'TOTAL', parseFloat(lastReportRows.reduce((s,r)=>s+r.fee,0).toFixed(2))]);
+  summaryData.push(['', '', '', '', 'TOTAL', lastReportRows.reduce((s,r)=>s+r.billDays,0), parseFloat(lastReportRows.reduce((s,r)=>s+r.fee,0).toFixed(2))]);
   const ws1 = XLSX.utils.aoa_to_sheet(summaryData);
-  ws1['!cols'] = [{wch:14},{wch:40},{wch:10},{wch:16},{wch:12}];
+  ws1['!cols'] = [{wch:14},{wch:40},{wch:14},{wch:10},{wch:13},{wch:16},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws1, 'Summary by SKU');
 
-  // Sheet 2: Full detail sorted by SKU then Moveable ID
-  const detailData = [['SKU', 'Item Description', 'Moveable ID', 'Txn #', 'In Date', 'Free Until', 'Out Date', 'Bill Days', 'Fee', 'Status']];
+  // ── Sheet 2: In-Stock Pallets ──────────────────────────
+  const inStockData = [['SKU', 'Item Description', 'Moveable ID', 'Txn #', 'In Date', 'Free Until', 'Bill Days (Month)', 'Fee ($)']];
+  const inStockRows = [...lastReportRows]
+    .filter(r => !r.displayOut)
+    .sort((a,b) => (a.sku||'').localeCompare(b.sku||'') || String(a.id).localeCompare(String(b.id)));
+
+  let lastSku = null;
+  inStockRows.forEach(r => {
+    if (r.sku !== lastSku) {
+      if (lastSku !== null) inStockData.push(['','','','','','','','']); // blank separator
+      lastSku = r.sku;
+    }
+    inStockData.push([
+      r.sku || '', r.description || '', r.id, r.txn || '',
+      r.inDate, freeEnd(r.inDate),
+      r.billDays, parseFloat(r.fee.toFixed(2))
+    ]);
+  });
+  // Subtotals per SKU
+  const inStockData2 = [['SKU', 'Item Description', 'Moveable ID', 'Txn #', 'In Date', 'Free Until', 'Bill Days (Month)', 'Fee ($)']];
+  lastSku = null;
+  let skuGroup = [];
+  function flushGroup() {
+    if (!skuGroup.length) return;
+    skuGroup.forEach(r => inStockData2.push(r));
+    const subtotalFee = skuGroup.reduce((s,r) => s + (r[7]||0), 0);
+    inStockData2.push(['', `  Subtotal (${skuGroup.length} pallets in stock)`, '', '', '', '', skuGroup.reduce((s,r)=>s+(r[6]||0),0), parseFloat(subtotalFee.toFixed(2))]);
+    inStockData2.push(['','','','','','','','']);
+    skuGroup = [];
+  }
+  inStockRows.forEach(r => {
+    if (r.sku !== lastSku) { flushGroup(); lastSku = r.sku; }
+    skuGroup.push([r.sku||'', r.description||'', r.id, r.txn||'', r.inDate, freeEnd(r.inDate), r.billDays, parseFloat(r.fee.toFixed(2))]);
+  });
+  flushGroup();
+  inStockData2.push(['', 'TOTAL IN STOCK', inStockRows.length + ' pallets', '', '', '',
+    inStockRows.reduce((s,r)=>s+r.billDays,0),
+    parseFloat(inStockRows.reduce((s,r)=>s+r.fee,0).toFixed(2))]);
+
+  const ws2 = XLSX.utils.aoa_to_sheet(inStockData2);
+  ws2['!cols'] = [{wch:14},{wch:40},{wch:13},{wch:10},{wch:12},{wch:12},{wch:17},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'In Stock Pallets');
+
+  // ── Sheet 3: Full Detail ───────────────────────────────
+  const detailData = [['SKU', 'Item Description', 'Moveable ID', 'Txn #', 'In Date', 'Free Until', 'Out Date', 'Bill Days', 'Fee ($)', 'Status']];
   const sorted = [...lastReportRows].sort((a,b) => (a.sku||'').localeCompare(b.sku||'') || String(a.id).localeCompare(String(b.id)));
   sorted.forEach(r => {
     const fe = freeEnd(r.inDate);
-    let status = r.displayOut ? 'Out' : (new Date() <= new Date(fe) ? 'Free' : 'Billing');
-    detailData.push([
-      r.sku || '', r.description || '', r.id, r.txn || '',
-      r.inDate, fe, r.displayOut || '',
-      r.billDays, parseFloat(r.fee.toFixed(2)), status
-    ]);
+    const status = r.displayOut ? 'Out' : (new Date() <= new Date(fe) ? 'Free' : 'Billing');
+    detailData.push([r.sku||'', r.description||'', r.id, r.txn||'', r.inDate, fe, r.displayOut||'', r.billDays, parseFloat(r.fee.toFixed(2)), status]);
   });
-  const ws2 = XLSX.utils.aoa_to_sheet(detailData);
-  ws2['!cols'] = [{wch:14},{wch:40},{wch:13},{wch:10},{wch:12},{wch:12},{wch:12},{wch:10},{wch:10},{wch:10}];
-  XLSX.utils.book_append_sheet(wb, ws2, 'Detail by SKU');
+  const ws3 = XLSX.utils.aoa_to_sheet(detailData);
+  ws3['!cols'] = [{wch:14},{wch:40},{wch:13},{wch:10},{wch:12},{wch:12},{wch:12},{wch:10},{wch:10},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, ws3, 'Full Detail');
 
-  XLSX.writeFile(wb, 'storage-report-' + lastReportMonth + '.xlsx');
+  XLSX.writeFile(wb, 'storage-report-' + monthLabel + '.xlsx');
 }
 
 function copyReport() {
