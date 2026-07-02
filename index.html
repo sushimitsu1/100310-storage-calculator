@@ -5,230 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>仓库存仓费用管理</title>
 
-<!--
-==========================================================
-  第一步：设置 Firebase
-==========================================================
-  1. 打开 https://console.firebase.google.com
-  2. 点击"创建项目"，输入项目名称（如 warehouse-app）
-  3. 进入项目后，点击左侧"构建" → "Realtime Database"
-  4. 点击"创建数据库"，选择任意地区，安全规则选"测试模式"
-  5. 点击"规则"标签，将规则改为：
-     {
-       "rules": {
-         ".read": true,
-         ".write": true
-       }
-     }
-  6. 回到"数据"标签，复制顶部的数据库 URL（格式：https://xxx.firebaseio.com）
-  7. 将下面的 FIREBASE_URL 替换为你的数据库 URL
+<script>const FIREBASE_URL = "https://nos-storage-938f0-default-rtdb.firebaseio.com";
 
-==========================================================
-  第二步：部署到 Netlify（获得可分享链接）
-==========================================================
-  1. 打开 https://app.netlify.com/drop
-  2. 将这个 HTML 文件拖拽到页面上
-  3. 几秒后得到一个链接，如 https://amazing-panda-123.netlify.app
-  4. 将链接发给同事，大家共享同一份数据库
-
-==========================================================
--->
-
-<script>
-  // ⬇️ 将这里替换为你的 Firebase Realtime Database URL
-  const FIREBASE_URL = "https://nos-storage-938f0-default-rtdb.firebaseio.com";
-
-  // ⬇️ Paste your Firebase Database Secret here (Project Settings → Service Accounts → Database secrets)
-  const FIREBASE_SECRET = "E89kqVW4p99UDRCDJcYZFlQthLz89WmRBnQadRJt";
-</script>
+  const FIREBASE_SECRET = "E89kqVW4p99UDRCDJcYZFlQthLz89WmRBnQadRJt";</script>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg: #ffffff;
-    --bg-secondary: #f5f5f4;
-    --bg-tertiary: #eeece8;
-    --text: #1a1a1a;
-    --text-muted: #6b6b6b;
-    --text-hint: #999;
-    --border: rgba(0,0,0,0.12);
-    --border-md: rgba(0,0,0,0.2);
-    --radius: 8px;
-    --radius-lg: 12px;
-    --green-bg: #EAF3DE; --green-text: #3B6D11;
-    --amber-bg: #FAEEDA; --amber-text: #854F0B;
-    --gray-bg: #D3D1C7; --gray-text: #444441;
-    --red-text: #A32D2D; --red-bg: #FCEBEB;
-    --blue-text: #185FA5; --blue-bg: #E6F1FB;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #1c1c1a; --bg-secondary: #252522; --bg-tertiary: #2e2e2a;
-      --text: #f0ece4; --text-muted: #999890; --text-hint: #666;
-      --border: rgba(255,255,255,0.1); --border-md: rgba(255,255,255,0.18);
-      --green-bg: #173404; --green-text: #C0DD97;
-      --amber-bg: #412402; --amber-text: #FAC775;
-      --gray-bg: #2C2C2A; --gray-text: #D3D1C7;
-      --red-text: #F09595; --red-bg: #501313;
-      --blue-text: #85B7EB; --blue-bg: #042C53;
-    }
-  }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    font-size: 14px; color: var(--text); background: var(--bg-tertiary);
-    min-height: 100vh;
-  }
-
-  .page { max-width: 1280px; margin: 0 auto; padding: 24px 24px; }
-
-  /* Header */
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; gap: 12px; flex-wrap: wrap; }
-  .header-left h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
-  .sync-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green-text); flex-shrink: 0; }
-  .dot.syncing { background: #BA7517; animation: pulse 1s infinite; }
-  .dot.error { background: #A32D2D; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
-  /* Tabs */
-  .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 20px; gap: 0; }
-  .tab-btn { padding: 10px 20px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s; }
-  .tab-btn:hover { color: var(--text); }
-  .tab-btn.active { color: var(--text); border-bottom-color: var(--text); font-weight: 500; }
-
-  /* Card */
-  .card { background: var(--bg); border-radius: var(--radius-lg); border: 0.5px solid var(--border); padding: 20px; margin-bottom: 16px; }
-
-  /* Form */
-  .form-grid { display: grid; grid-template-columns: 1fr 160px 1.2fr auto; gap: 10px; align-items: end; }
-  @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr 1fr; } }
-  .field { display: flex; flex-direction: column; gap: 5px; }
-  .field label { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  input, select {
-    height: 38px; padding: 0 11px; border: 1px solid var(--border-md);
-    border-radius: var(--radius); background: var(--bg); color: var(--text);
-    font-size: 14px; width: 100%; transition: border-color 0.15s;
-  }
-  input:focus, select:focus { outline: none; border-color: #378ADD; box-shadow: 0 0 0 3px rgba(55,138,221,0.15); }
-  input[type=month] { height: 38px; }
-
-  /* Buttons */
-  .btn {
-    height: 38px; padding: 0 16px; border: 1px solid var(--border-md);
-    border-radius: var(--radius); background: var(--bg); cursor: pointer;
-    font-size: 13px; color: var(--text); white-space: nowrap; font-family: inherit;
-    transition: background 0.12s, transform 0.08s;
-  }
-  .btn:hover { background: var(--bg-secondary); }
-  .btn:active { transform: scale(0.98); }
-  .btn-primary { background: var(--text); color: var(--bg); border-color: var(--text); }
-  .btn-primary:hover { opacity: 0.82; background: var(--text); }
-  .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
-  .btn-danger { color: var(--red-text); border-color: var(--red-text); }
-  .btn-danger:hover { background: var(--red-bg); }
-  .btn-success { color: var(--green-text); border-color: var(--green-text); }
-  .btn-success:hover { background: var(--green-bg); }
-  .btn-outline { color: var(--blue-text); border-color: var(--blue-text); }
-  .btn-outline:hover { background: var(--blue-bg); }
-
-  /* Metrics */
-  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
-  @media (max-width: 560px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
-  .metric { background: var(--bg-secondary); border-radius: var(--radius); padding: 14px 16px; }
-  .metric-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
-  .metric-value { font-size: 24px; font-weight: 600; line-height: 1; }
-  .metric-sub { font-size: 11px; color: var(--text-hint); margin-top: 4px; }
-
-  /* Table */
-  .table-wrap { overflow-x: auto; border-radius: var(--radius); border: 0.5px solid var(--border); }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }
-  thead { background: var(--bg-secondary); }
-  th { padding: 10px 12px; text-align: left; font-weight: 500; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 0.5px solid var(--border); white-space: nowrap; }
-  td { padding: 10px 12px; border-bottom: 0.5px solid var(--border); vertical-align: middle; }
-  tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover td { background: var(--bg-secondary); }
-
-  /* Badges */
-  .badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 100px; font-size: 11px; font-weight: 500; }
-  .badge-free { background: var(--green-bg); color: var(--green-text); }
-  .badge-billing { background: var(--amber-bg); color: var(--amber-text); }
-  .badge-out { background: var(--gray-bg); color: var(--gray-text); }
-
-  /* Fee highlight */
-  .fee { font-weight: 600; color: var(--amber-text); }
-  .fee-zero { color: var(--text-hint); }
-
-  /* Empty / Loading */
-  .empty { text-align: center; padding: 48px 20px; color: var(--text-hint); }
-  .empty-icon { font-size: 32px; margin-bottom: 12px; }
-  .empty p { font-size: 13px; }
-  .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--text); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 8px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Notice banner */
-  .notice { display: flex; gap: 10px; align-items: flex-start; background: var(--blue-bg); color: var(--blue-text); border-radius: var(--radius); padding: 12px 14px; font-size: 12px; margin-bottom: 16px; line-height: 1.5; }
-  .notice-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
-
-  /* Config warning */
-  .config-warn { background: var(--red-bg); color: var(--red-text); border-radius: var(--radius); padding: 14px 16px; font-size: 13px; margin-bottom: 16px; line-height: 1.6; }
-  .config-warn strong { font-weight: 600; }
-  .config-warn code { background: rgba(0,0,0,0.08); padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 12px; }
-
-  /* Modal */
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 16px; }
-  .modal { background: var(--bg); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 360px; border: 0.5px solid var(--border); }
-  .modal h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
-  .modal .field { margin-bottom: 14px; }
-  .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
-
-  /* Bulk delete bar */
-  .bulk-bar { display:none; align-items:center; gap:10px; background:var(--amber-bg); border-radius:var(--radius); padding:10px 14px; margin-bottom:10px; font-size:13px; color:var(--amber-text); }
-  .bulk-bar.visible { display:flex !important; }
-  input[type=checkbox] { width:15px; height:15px; cursor:pointer; accent-color:var(--text); }
-
-  /* Import modal */
-  .modal-wide { max-width: 620px !important; }
-  .import-table-wrap { max-height: 280px; overflow-y: auto; border-radius: var(--radius); border: 0.5px solid var(--border); margin-top: 12px; }
-  .import-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  .import-table th { padding: 7px 10px; background: var(--bg-secondary); font-weight: 500; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 0.5px solid var(--border); }
-  .import-table td { padding: 7px 10px; border-bottom: 0.5px solid var(--border); }
-  .import-table tbody tr:last-child td { border-bottom: none; }
-  .row-ok td { color: var(--text); }
-  .row-dup td { color: var(--amber-text); background: var(--amber-bg); }
-  .row-err td { color: var(--red-text); background: var(--red-bg); }
-  .upload-zone { border: 2px dashed var(--border-md); border-radius: var(--radius); padding: 28px; text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
-  .upload-zone:hover { border-color: #378ADD; background: var(--blue-bg); }
-  .upload-zone.dragover { border-color: #378ADD; background: var(--blue-bg); }
-  .upload-icon { font-size: 28px; margin-bottom: 8px; }
-  .upload-hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
-
-  /* Report */
-  .report-area {
-    background: var(--bg-secondary); border-radius: var(--radius); border: 0.5px solid var(--border);
-    padding: 20px; font-size: 13px; font-family: 'Courier New', monospace; line-height: 1.8;
-    white-space: pre-wrap; max-height: 520px; overflow-y: auto; color: var(--text);
-  }
-  .report-toolbar { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 16px; flex-wrap: wrap; }
-
-  /* Print */
-  @media print {
-    body { background: white; color: black; }
-    .tabs, .header, .notice, .btn, .form-grid, #tab-pallets, #tab-billing { display: none !important; }
-    .report-area { max-height: none; border: none; padding: 0; font-size: 12px; }
-    .card { border: none; padding: 0; }
-  }
-</style>
+<style>*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}:root{--bg:#ffffff;--bg-secondary:#f5f5f4;--bg-tertiary:#eeece8;--text:#1a1a1a;--text-muted:#6b6b6b;--text-hint:#999;--border:rgba(0,0,0,0.12);--border-md:rgba(0,0,0,0.2);--radius:8px;--radius-lg:12px;--green-bg:#EAF3DE;--green-text:#3B6D11;--amber-bg:#FAEEDA;--amber-text:#854F0B;--gray-bg:#D3D1C7;--gray-text:#444441;--red-text:#A32D2D;--red-bg:#FCEBEB;--blue-text:#185FA5;--blue-bg:#E6F1FB;}@media (prefers-color-scheme:dark){:root{--bg:#1c1c1a;--bg-secondary:#252522;--bg-tertiary:#2e2e2a;--text:#f0ece4;--text-muted:#999890;--text-hint:#666;--border:rgba(255,255,255,0.1);--border-md:rgba(255,255,255,0.18);--green-bg:#173404;--green-text:#C0DD97;--amber-bg:#412402;--amber-text:#FAC775;--gray-bg:#2C2C2A;--gray-text:#D3D1C7;--red-text:#F09595;--red-bg:#501313;--blue-text:#85B7EB;--blue-bg:#042C53;}}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:14px;color:var(--text);background:var(--bg-tertiary);min-height:100vh;}.page{max-width:1280px;margin:0 auto;padding:24px 24px;}.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;gap:12px;flex-wrap:wrap;}.header-left h1{font-size:20px;font-weight:600;margin-bottom:4px;}.sync-row{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);}.dot{width:7px;height:7px;border-radius:50%;background:var(--green-text);flex-shrink:0;}.dot.syncing{background:#BA7517;animation:pulse 1s infinite;}.dot.error{background:#A32D2D;}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:20px;gap:0;}.tab-btn{padding:10px 20px;border:none;background:none;cursor:pointer;font-size:14px;color:var(--text-muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color 0.15s;}.tab-btn:hover{color:var(--text);}.tab-btn.active{color:var(--text);border-bottom-color:var(--text);font-weight:500;}.card{background:var(--bg);border-radius:var(--radius-lg);border:0.5px solid var(--border);padding:20px;margin-bottom:16px;}.form-grid{display:grid;grid-template-columns:1fr 160px 1.2fr auto;gap:10px;align-items:end;}@media (max-width:640px){.form-grid{grid-template-columns:1fr 1fr;}}.field{display:flex;flex-direction:column;gap:5px;}.field label{font-size:11px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;}input,select{height:38px;padding:0 11px;border:1px solid var(--border-md);border-radius:var(--radius);background:var(--bg);color:var(--text);font-size:14px;width:100%;transition:border-color 0.15s;}input:focus,select:focus{outline:none;border-color:#378ADD;box-shadow:0 0 0 3px rgba(55,138,221,0.15);}input[type=month]{height:38px;}.btn{height:38px;padding:0 16px;border:1px solid var(--border-md);border-radius:var(--radius);background:var(--bg);cursor:pointer;font-size:13px;color:var(--text);white-space:nowrap;font-family:inherit;transition:background 0.12s,transform 0.08s;}.btn:hover{background:var(--bg-secondary);}.btn:active{transform:scale(0.98);}.btn-primary{background:var(--text);color:var(--bg);border-color:var(--text);}.btn-primary:hover{opacity:0.82;background:var(--text);}.btn-sm{height:28px;padding:0 10px;font-size:12px;}.btn-danger{color:var(--red-text);border-color:var(--red-text);}.btn-danger:hover{background:var(--red-bg);}.btn-success{color:var(--green-text);border-color:var(--green-text);}.btn-success:hover{background:var(--green-bg);}.btn-outline{color:var(--blue-text);border-color:var(--blue-text);}.btn-outline:hover{background:var(--blue-bg);}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px;}@media (max-width:560px){.metrics{grid-template-columns:repeat(2,1fr);}}.metric{background:var(--bg-secondary);border-radius:var(--radius);padding:14px 16px;}.metric-label{font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:500;text-transform:uppercase;letter-spacing:0.04em;}.metric-value{font-size:24px;font-weight:600;line-height:1;}.metric-sub{font-size:11px;color:var(--text-hint);margin-top:4px;}.table-wrap{overflow-x:auto;border-radius:var(--radius);border:0.5px solid var(--border);}table{width:100%;border-collapse:collapse;font-size:13px;min-width:600px;}thead{background:var(--bg-secondary);}th{padding:10px 12px;text-align:left;font-weight:500;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;border-bottom:0.5px solid var(--border);white-space:nowrap;}td{padding:10px 12px;border-bottom:0.5px solid var(--border);vertical-align:middle;}tbody tr:last-child td{border-bottom:none;}tbody tr:hover td{background:var(--bg-secondary);}.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:100px;font-size:11px;font-weight:500;}.badge-free{background:var(--green-bg);color:var(--green-text);}.badge-billing{background:var(--amber-bg);color:var(--amber-text);}.badge-out{background:var(--gray-bg);color:var(--gray-text);}.fee{font-weight:600;color:var(--amber-text);}.fee-zero{color:var(--text-hint);}.empty{text-align:center;padding:48px 20px;color:var(--text-hint);}.empty-icon{font-size:32px;margin-bottom:12px;}.empty p{font-size:13px;}.spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin 0.6s linear infinite;vertical-align:middle;margin-right:8px;}@keyframes spin{to{transform:rotate(360deg);}}.notice{display:flex;gap:10px;align-items:flex-start;background:var(--blue-bg);color:var(--blue-text);border-radius:var(--radius);padding:12px 14px;font-size:12px;margin-bottom:16px;line-height:1.5;}.notice-icon{font-size:14px;flex-shrink:0;margin-top:1px;}.config-warn{background:var(--red-bg);color:var(--red-text);border-radius:var(--radius);padding:14px 16px;font-size:13px;margin-bottom:16px;line-height:1.6;}.config-warn strong{font-weight:600;}.config-warn code{background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:12px;}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:200;padding:16px;}.modal{background:var(--bg);border-radius:var(--radius-lg);padding:24px;width:100%;max-width:360px;border:0.5px solid var(--border);}.modal h3{font-size:16px;font-weight:600;margin-bottom:16px;}.modal .field{margin-bottom:14px;}.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;}.bulk-bar{display:none;align-items:center;gap:10px;background:var(--amber-bg);border-radius:var(--radius);padding:10px 14px;margin-bottom:10px;font-size:13px;color:var(--amber-text);}.bulk-bar.visible{display:flex !important;}input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--text);}.modal-wide{max-width:620px !important;}.import-table-wrap{max-height:280px;overflow-y:auto;border-radius:var(--radius);border:0.5px solid var(--border);margin-top:12px;}.import-table{width:100%;border-collapse:collapse;font-size:12px;}.import-table th{padding:7px 10px;background:var(--bg-secondary);font-weight:500;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;border-bottom:0.5px solid var(--border);}.import-table td{padding:7px 10px;border-bottom:0.5px solid var(--border);}.import-table tbody tr:last-child td{border-bottom:none;}.row-ok td{color:var(--text);}.row-dup td{color:var(--amber-text);background:var(--amber-bg);}.row-err td{color:var(--red-text);background:var(--red-bg);}.upload-zone{border:2px dashed var(--border-md);border-radius:var(--radius);padding:28px;text-align:center;cursor:pointer;transition:border-color 0.15s,background 0.15s;}.upload-zone:hover{border-color:#378ADD;background:var(--blue-bg);}.upload-zone.dragover{border-color:#378ADD;background:var(--blue-bg);}.upload-icon{font-size:28px;margin-bottom:8px;}.upload-hint{font-size:12px;color:var(--text-muted);margin-top:4px;}.report-area{background:var(--bg-secondary);border-radius:var(--radius);border:0.5px solid var(--border);padding:20px;font-size:13px;font-family:'Courier New',monospace;line-height:1.8;white-space:pre-wrap;max-height:520px;overflow-y:auto;color:var(--text);}.report-toolbar{display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap;}@media print{body{background:white;color:black;}.tabs,.header,.notice,.btn,.form-grid,#tab-pallets,#tab-billing{display:none !important;}.report-area{max-height:none;border:none;padding:0;font-size:12px;}.card{border:none;padding:0;}}</style>
 </head>
 <body>
 
 <div class="page">
 
-  <!-- Header -->
   <div class="header">
     <div class="header-left">
       <h1>仓库存仓费用管理</h1>
@@ -242,7 +30,6 @@
     </div>
   </div>
 
-  <!-- Config Warning (shown if URL not set) -->
   <div class="config-warn" id="config-warn" style="display:none">
     <strong>⚠️ 尚未配置 Firebase 数据库</strong><br>
     请用文本编辑器打开此 HTML 文件，将顶部 <code>FIREBASE_URL</code> 替换为你的 Firebase Realtime Database URL。<br>
@@ -254,14 +41,12 @@
     <span>数据存储于共享数据库，所有同事访问同一链接即可共享数据。计费规则：<strong>15天免租期</strong>，超出后 <strong>$1.2 / 托盘 / 天</strong>。</span>
   </div>
 
-  <!-- Tabs -->
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('pallets')">托盘管理</button>
     <button class="tab-btn" onclick="showTab('billing')">费用汇总</button>
     <button class="tab-btn" onclick="showTab('report')">月度报告</button>
   </div>
 
-  <!-- ========== TAB: 托盘管理 ========== -->
   <div id="tab-pallets">
     <div class="card">
       <div style="display:grid;grid-template-columns:1fr 140px 110px 110px 1.4fr auto;gap:10px;align-items:end">
@@ -299,7 +84,6 @@
       </div>
     </div>
 
-    <!-- PDF parsing loading notice -->
     <div id="pdf-loading-notice" style="display:none;align-items:center;gap:10px;background:var(--blue-bg);color:var(--blue-text);border-radius:var(--radius);padding:12px 16px;font-size:13px;margin-bottom:12px">
       <span class="spinner" style="border-top-color:var(--blue-text)"></span>
       Reading PDF with AI — extracting pallet IDs and creation date...
@@ -314,7 +98,6 @@
       <p>暂无托盘记录，请添加第一个托盘</p>
     </div>
 
-    <!-- Search bar -->
     <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
       <input type="text" id="search-input" placeholder="🔍  Search Moveable ID, SKU, Txn #, Description..." 
         oninput="renderPallets()"
@@ -324,7 +107,6 @@
       <button class="btn btn-sm" id="collapse-all-btn" onclick="toggleAllGroups()" style="white-space:nowrap">▶ Collapse All</button>
     </div>
 
-    <!-- Bulk action bar -->
     <div class="bulk-bar" id="bulk-bar">
       <span id="bulk-count">0 selected</span>
       <button class="btn btn-sm btn-danger" onclick="deleteSelected()">🗑 Delete Selected</button>
@@ -332,7 +114,6 @@
       <button class="btn btn-sm" onclick="clearSelection()" style="margin-left:auto">Cancel</button>
     </div>
 
-    <!-- Quick select bar -->
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:11px;color:var(--text-muted)">Quick select:</span>
       <button class="btn btn-sm" onclick="selectAllCheckedOut()" style="font-size:11px;color:var(--amber-text);border-color:var(--amber-text)">☑ All Checked Out</button>
@@ -363,7 +144,6 @@
     </div>
   </div>
 
-  <!-- ========== TAB: 费用汇总 ========== -->
   <div id="tab-billing" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
       <div class="field" style="flex-direction:row;align-items:center;gap:8px">
@@ -386,7 +166,6 @@
     </div>
   </div>
 
-  <!-- ========== TAB: 月度报告 ========== -->
   <div id="tab-report" style="display:none">
     <div class="card">
       <div class="report-toolbar">
@@ -411,12 +190,11 @@
     </div>
   </div>
 
-<!-- Import Preview Modal -->
 <div class="modal-overlay" id="import-modal" style="display:none">
   <div class="modal modal-wide">
     <h3 id="import-modal-title">Import Preview</h3>
     <div id="import-summary" style="font-size:13px;color:var(--text-muted);margin-bottom:10px"></div>
-    <!-- Date override row (shown for PDF imports) -->
+    
     <div id="import-date-row" style="display:none;margin-bottom:12px;padding:11px 14px;background:var(--amber-bg);border-radius:var(--radius);border:0.5px solid var(--amber-text)">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span style="font-size:12px;color:var(--amber-text);font-weight:500">📅 PDF creation date: <strong id="import-pdf-date"></strong></span>
@@ -445,12 +223,11 @@
   </div>
 </div>
 
-<!-- Checkout from PDF Modal -->
 <div class="modal-overlay" id="checkout-modal" style="display:none">
   <div class="modal modal-wide">
     <h3>Checkout from PDF Transaction</h3>
     <div id="checkout-summary" style="font-size:13px;color:var(--text-muted);margin-bottom:12px"></div>
-    <!-- Date selector -->
+    
     <div id="checkout-date-row" style="margin-bottom:12px;padding:11px 14px;background:var(--bg-secondary);border-radius:var(--radius);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <span style="font-size:12px;font-weight:500">Checkout Date:</span>
       <input type="date" id="checkout-date-input" style="width:160px;height:30px" />
@@ -474,7 +251,6 @@
   </div>
 </div>
 
-<!-- Edit Pallet Modal -->
 <div class="modal-overlay" id="edit-modal" style="display:none">
   <div class="modal">
     <h3>Edit Pallet</h3>
@@ -505,9 +281,8 @@
   </div>
 </div>
 
-</div><!-- /page -->
+</div>
 
-<!-- Out Modal -->
 <div class="modal-overlay" id="out-modal" style="display:none">
   <div class="modal">
     <h3>登记出库</h3>
@@ -526,9 +301,7 @@
   </div>
 </div>
 
-<script>
-// ── Constants ──────────────────────────────────────────
-const FREE_DAYS = 15;
+<script>const FREE_DAYS = 15;
 const RATE = 1.2;
 const STORAGE_PATH = "/pallets";
 const LOCAL_KEY = "wh_local_pallets_v1";
@@ -537,7 +310,6 @@ const useFirebase = typeof FIREBASE_URL !== 'undefined' && FIREBASE_URL && !FIRE
 
 let pallets = [];
 
-// ── Helpers ────────────────────────────────────────────
 function today() { return new Date().toISOString().split('T')[0]; }
 function daysBetween(a, b) { return Math.floor((new Date(b) - new Date(a)) / 86400000); }
 function freeEnd(d) { const x = new Date(d); x.setDate(x.getDate() + FREE_DAYS - 1); return x.toISOString().split('T')[0]; }
@@ -546,7 +318,6 @@ function subtractOneDay(d) { const x = new Date(d); x.setDate(x.getDate() - 1); 
 function addOneDay(d) { const x = new Date(d); x.setDate(x.getDate() + 1); return x.toISOString().split('T')[0]; }
 function fmtFee(days) { return '$' + (days * RATE).toFixed(2); }
 
-// ── Sync Status ────────────────────────────────────────
 function setSyncStatus(s) {
   const dot = document.getElementById('sync-dot');
   const lbl = document.getElementById('sync-label');
@@ -555,7 +326,6 @@ function setSyncStatus(s) {
   lbl.textContent = msgs[s] || '';
 }
 
-// ── Firebase REST API ──────────────────────────────────
 async function fbGet() {
   const r = await fetch(FIREBASE_URL + STORAGE_PATH + '.json?auth=' + FIREBASE_SECRET);
   if (!r.ok) throw new Error('Read failed: HTTP ' + r.status);
@@ -564,7 +334,6 @@ async function fbGet() {
   return Object.values(data).filter(Boolean).map(p => ({ ...p, id: String(p.id) }));
 }
 
-// ── Load / Save ────────────────────────────────────────
 async function loadData() {
   setSyncStatus('syncing');
   if (!useFirebase) {
@@ -603,7 +372,6 @@ async function saveData() {
   }
 }
 
-// ── Pallet CRUD ────────────────────────────────────────
 async function addPallet() {
   const id = document.getElementById('inp-id').value.trim();
   const inDate = document.getElementById('inp-in').value;
@@ -682,7 +450,6 @@ function removePallet(id) {
   saveData();
 }
 
-// ── Multi-select state ─────────────────────────────────
 let selectedIds = new Set();
 
 function toggleSelectAll(cb) {
@@ -724,10 +491,10 @@ function deleteSelected() {
 }
 
 function selectTxnGroup(txn) {
-  // Expand the group first so checkboxes are rendered
+
   collapsedGroups.delete(txn);
   renderPallets();
-  // Then select all pallets in this txn group
+
   pallets.filter(p => (p.txn || '—') === txn).forEach(p => selectedIds.add(String(p.id)));
   document.querySelectorAll('.row-check').forEach(cb => {
     if (selectedIds.has(cb.dataset.id)) cb.checked = true;
@@ -736,10 +503,10 @@ function selectTxnGroup(txn) {
 }
 
 function selectAllCheckedOut() {
-  // Expand all groups first so checkboxes are rendered
+
   collapsedGroups.clear();
   renderPallets();
-  // Then check all checked-out rows
+
   selectedIds.clear();
   pallets.forEach(p => { if (p.outDate) selectedIds.add(String(p.id)); });
   document.querySelectorAll('.row-check').forEach(cb => {
@@ -769,7 +536,7 @@ function toggleInStockOnly() {
     btn.style.color = 'var(--bg)';
     btn.style.borderColor = 'var(--green-text)';
     btn.textContent = '📦 In Stock Only ✓';
-    collapsedGroups.clear(); // expand all so pallets are visible
+    collapsedGroups.clear();
   } else {
     btn.style.background = '';
     btn.style.color = '';
@@ -810,19 +577,17 @@ function undoCheckoutSelected() {
   saveData();
 }
 
-// ── Collapsed Txn groups ───────────────────────────────
 const collapsedGroups = new Set();
 
 function toggleGroup(txn) {
   collapsedGroups.has(txn) ? collapsedGroups.delete(txn) : collapsedGroups.add(txn);
-  // Update collapse all button label
+
   const allGroupKeys = [...new Set(pallets.map(p => p.txn || '—'))];
   const btn = document.getElementById('collapse-all-btn');
   if (btn) btn.textContent = allGroupKeys.every(k => collapsedGroups.has(k)) ? '▼ Expand All' : '▶ Collapse All';
   renderPallets();
 }
 
-// ── Render: Pallet Table ───────────────────────────────
 function renderPallets() {
   const tbody = document.getElementById('pallet-body');
   const empty = document.getElementById('pallets-empty');
@@ -853,7 +618,6 @@ function renderPallets() {
   }
   empty.style.display = 'none'; wrap.style.display = 'block';
 
-  // Group pallets by Txn # (no txn → group "—")
   const groupOrder = [];
   const groups = {};
   filtered.forEach(p => {
@@ -879,7 +643,6 @@ function renderPallets() {
       inFree   ? `<span style="color:var(--green-text)">${inFree} free</span>` : ''
     ].filter(Boolean).join(' &nbsp;·&nbsp; ');
 
-    // Group header row
     tbody.insertAdjacentHTML('beforeend', `
       <tr onclick="toggleGroup('${txn.replace(/'/g,"\\'")}')" style="cursor:pointer;background:var(--bg-tertiary);user-select:none">
         <td style="padding:10px 10px;font-size:13px" colspan="2">
@@ -936,7 +699,6 @@ function renderPallets() {
   });
 }
 
-// ── Render: Billing Summary ────────────────────────────
 function renderBilling() {
   const cutoff = document.getElementById('bill-date').value || today();
   const tbody = document.getElementById('billing-body');
@@ -974,7 +736,6 @@ function renderBilling() {
   `;
 }
 
-// ── Generate Monthly Report ────────────────────────────
 let lastReportRows = [];
 let lastReportMonth = '';
 
@@ -999,18 +760,16 @@ function generateReport() {
   let total = 0, newIn = 0, wentOut = 0, stillIn = 0;
 
   pallets.forEach(p => {
-    if (p.inDate > monthEnd) return; // not arrived yet
-    if (p.outDate && p.outDate <= monthStart) return; // left before month started
+    if (p.inDate > monthEnd) return;
+    if (p.outDate && p.outDate <= monthStart) return;
 
-    const fe = freeEnd(p.inDate); // last free day
-    const palletBillStart = addOneDay(fe); // first billing day ever
+    const fe = freeEnd(p.inDate);
+    const palletBillStart = addOneDay(fe);
 
-    // Billing window within this month
     const monthBillStart = palletBillStart >= monthStart ? palletBillStart : monthStart;
     const outInMonth = p.outDate && p.outDate <= monthEnd;
-    const monthBillEnd = outInMonth ? p.outDate : monthEnd; // include pickup day
+    const monthBillEnd = outInMonth ? p.outDate : monthEnd;
 
-    // Bill days = 0 if still in free period for whole month
     const billDays = monthBillStart <= monthBillEnd
       ? daysBetween(monthBillStart, monthBillEnd) + 1
       : 0;
@@ -1021,7 +780,6 @@ function generateReport() {
     if (isNewThisMonth) newIn++;
     if (outInMonth) wentOut++; else stillIn++;
 
-    // For display: show actual outDate only if it's within the month
     rows.push({ ...p, billDays, fee, isNewThisMonth, outThisMonth: outInMonth, displayOut: outInMonth ? p.outDate : null });
   });
 
@@ -1056,7 +814,6 @@ function generateReport() {
   lines.push('  【费用明细 — 按 SKU 分组】');
   lines.push('');
 
-  // Group rows by SKU
   const skuOrder = [];
   const skuGroups = {};
   rows.forEach(r => {
@@ -1106,7 +863,6 @@ function exportReportExcel() {
   const wb = XLSX.utils.book_new();
   const monthLabel = lastReportMonth;
 
-  // ── Sheet 1: Summary by SKU ────────────────────────────
   const summaryData = [['SKU', 'Item Description', 'Total Pallets', 'In Stock', 'Checked Out', 'Bill Days Total', 'Total Fee ($)']];
   const skuMap = {};
   lastReportRows.forEach(r => {
@@ -1125,7 +881,6 @@ function exportReportExcel() {
   ws1['!cols'] = [{wch:14},{wch:40},{wch:14},{wch:10},{wch:13},{wch:16},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws1, 'Summary by SKU');
 
-  // ── Sheet 2: In-Stock Pallets ──────────────────────────
   const inStockData = [['SKU', 'Item Description', 'Moveable ID', 'Txn #', 'In Date', 'Free Until', 'Bill Days (Month)', 'Fee ($)']];
   const inStockRows = [...lastReportRows]
     .filter(r => !r.displayOut)
@@ -1134,7 +889,7 @@ function exportReportExcel() {
   let lastSku = null;
   inStockRows.forEach(r => {
     if (r.sku !== lastSku) {
-      if (lastSku !== null) inStockData.push(['','','','','','','','']); // blank separator
+      if (lastSku !== null) inStockData.push(['','','','','','','','']);
       lastSku = r.sku;
     }
     inStockData.push([
@@ -1143,7 +898,7 @@ function exportReportExcel() {
       r.billDays, parseFloat(r.fee.toFixed(2))
     ]);
   });
-  // Subtotals per SKU
+
   const inStockData2 = [['SKU', 'Item Description', 'Moveable ID', 'Txn #', 'In Date', 'Free Until', 'Bill Days (Month)', 'Fee ($)']];
   lastSku = null;
   let skuGroup = [];
@@ -1168,7 +923,6 @@ function exportReportExcel() {
   ws2['!cols'] = [{wch:14},{wch:40},{wch:13},{wch:10},{wch:12},{wch:12},{wch:17},{wch:10}];
   XLSX.utils.book_append_sheet(wb, ws2, 'In Stock Pallets');
 
-  // ── Sheet 3: Full Detail ───────────────────────────────
   const detailData = [['SKU', 'Item Description', 'Moveable ID', 'Txn #', 'In Date', 'Free Until', 'Out Date', 'Bill Days', 'Fee ($)', 'Status']];
   const sorted = [...lastReportRows].sort((a,b) => (a.sku||'').localeCompare(b.sku||'') || String(a.id).localeCompare(String(b.id)));
   sorted.forEach(r => {
@@ -1193,7 +947,6 @@ function copyReport() {
   });
 }
 
-// ── Tab Switching ──────────────────────────────────────
 function showTab(tab) {
   ['pallets', 'billing', 'report'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
@@ -1204,7 +957,6 @@ function showTab(tab) {
   if (tab === 'billing') renderBilling();
 }
 
-// ── Checkout from PDF ──────────────────────────────────
 let checkoutRows = [];
 
 async function handleCheckoutPdf(e) {
@@ -1229,26 +981,20 @@ async function handleCheckoutPdf(e) {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
-    // Extract ALL text from all pages in proper reading order
-    // PDF.js returns items in stream order (not visual order), so we must
-    // sort by Y position (descending = top to bottom) then X (left to right)
     let fullText = '';
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
 
-      // Group items by Y coordinate (rounded to handle sub-pixel variations)
       const lineMap = {};
       content.items.forEach(item => {
         if (!item.str || !item.str.trim()) return;
-        const y = Math.round(item.transform[5] / 2) * 2; // round to 2px
+        const y = Math.round(item.transform[5] / 2) * 2;
         const x = item.transform[4];
         if (!lineMap[y]) lineMap[y] = [];
         lineMap[y].push({ x, str: item.str });
       });
 
-      // Sort lines top-to-bottom (higher Y = higher on page in PDF coords)
-      // Sort items within each line left-to-right
       const sortedLines = Object.keys(lineMap)
         .map(Number)
         .sort((a, b) => b - a)
@@ -1257,7 +1003,6 @@ async function handleCheckoutPdf(e) {
       fullText += sortedLines.join('\n') + '\n';
     }
 
-    // Find all Transaction ID positions in the full text
     const txnIdRe = /Transaction\s+ID\s+(\d+)/gi;
     const txnPositions = [];
     let m;
@@ -1267,21 +1012,19 @@ async function handleCheckoutPdf(e) {
 
     if (!txnPositions.length) throw new Error('No Transaction IDs found in this PDF.');
 
-    // Slice text into per-transaction sections
     const transactions = {};
     txnPositions.forEach((t, i) => {
       const start = t.pos;
       const end = i + 1 < txnPositions.length ? txnPositions[i + 1].pos : fullText.length;
       const section = fullText.slice(start, end);
 
-      // Extract Confirm Date from this section
       const confirmMatch = section.match(/Confirm\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
       let confirmDate = '';
       if (confirmMatch) {
         const parts = confirmMatch[1].split('/');
         confirmDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
       } else {
-        // Fallback to Creation Date
+
         const creationMatch = section.match(/Creation\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
         if (creationMatch) {
           const parts = creationMatch[1].split('/');
@@ -1289,7 +1032,6 @@ async function handleCheckoutPdf(e) {
         }
       }
 
-      // Extract pallet IDs from this section
       const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
       let pm;
       if (!transactions[t.txnId]) transactions[t.txnId] = { confirmDate, palletIds: new Set() };
@@ -1299,7 +1041,6 @@ async function handleCheckoutPdf(e) {
       }
     });
 
-    // Build checkoutRows
     checkoutRows = [];
     Object.entries(transactions).forEach(([txnId, txn]) => {
       [...txn.palletIds].forEach(id => {
@@ -1335,14 +1076,12 @@ function showCheckoutModal(txnCount, fileName, transactions) {
   document.getElementById('checkout-confirm-btn').textContent = `Checkout ${readyCount} Pallet${readyCount !== 1 ? 's' : ''}`;
   document.getElementById('checkout-confirm-btn').disabled = readyCount === 0;
 
-  // Hide the single date input — each txn has its own date now
   document.getElementById('checkout-date-row').style.display = 'none';
 
   const tbody = document.getElementById('checkout-body');
   tbody.innerHTML = '';
   const colors = { ready: 'var(--green-text)', 'already-out': 'var(--amber-text)', 'not-found': 'var(--red-text)' };
 
-  // Group rows by txnId for display
   const grouped = {};
   checkoutRows.forEach(r => {
     if (!grouped[r.txnId]) grouped[r.txnId] = [];
@@ -1352,7 +1091,7 @@ function showCheckoutModal(txnCount, fileName, transactions) {
   Object.entries(grouped).forEach(([txnId, rows]) => {
     const txnReady = rows.filter(r => r.status === 'ready').length;
     const date = rows[0].confirmDate || '';
-    // Txn group header row with editable date
+
     tbody.insertAdjacentHTML('beforeend', `
       <tr style="background:var(--bg-tertiary)">
         <td colspan="2" style="font-weight:600;padding:8px 10px">Txn #${txnId}</td>
@@ -1391,7 +1130,7 @@ function closeCheckoutModal() {
 
 function confirmCheckoutPdf() {
   const toCheckout = checkoutRows.filter(r => r.status === 'ready');
-  // Validate all have dates
+
   const missing = toCheckout.filter(r => !r.confirmDate);
   if (missing.length) { alert('Please set a checkout date for all transactions.'); return; }
   toCheckout.forEach(r => {
@@ -1404,7 +1143,6 @@ function confirmCheckoutPdf() {
   alert('✓ Checked out ' + toCheckout.length + ' pallet' + (toCheckout.length !== 1 ? 's' : '') + ' across ' + new Set(toCheckout.map(r=>r.txnId)).size + ' transactions.');
 }
 
-// ── PDF Import (client-side via PDF.js) ───────────────
 async function handlePdfUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1414,7 +1152,7 @@ async function handlePdfUpload(e) {
   loadingEl.style.display = 'flex';
 
   try {
-    // Load PDF.js if not already loaded
+
     if (!window.pdfjsLib) {
       await new Promise((res, rej) => {
         const s = document.createElement('script');
@@ -1429,11 +1167,9 @@ async function handlePdfUpload(e) {
       });
     }
 
-    // Read file as ArrayBuffer
     const arrayBuffer2 = await file.arrayBuffer();
     const pdf2 = await pdfjsLib.getDocument({ data: arrayBuffer2 }).promise;
 
-    // Extract text in proper reading order (sort by Y then X position)
     let fullText = '';
     for (let i = 1; i <= pdf2.numPages; i++) {
       const page = await pdf2.getPage(i);
@@ -1453,11 +1189,10 @@ async function handlePdfUpload(e) {
       fullText += sortedLines.join('\n') + '\n';
     }
 
-    // Detect format: "View Transaction" (new inbound format) vs "Receive Summary Ticket" (old format)
     const isViewTransaction = /View\s+Transaction/i.test(fullText) && /Transaction\s+ID\s+\d+/i.test(fullText);
 
     if (isViewTransaction) {
-      // ── View Transaction format: per-txn with Confirm Date as In Date ──
+
       const txnIdRe = /Transaction\s+ID\s+(\d+)/gi;
       const txnPositions = [];
       let tm;
@@ -1472,7 +1207,6 @@ async function handlePdfUpload(e) {
       txnPositions.forEach((t, i) => {
         const section = fullText.slice(t.pos, i + 1 < txnPositions.length ? txnPositions[i + 1].pos : fullText.length);
 
-        // Use Confirm Date as the In Date (actual receiving date)
         const confirmMatch = section.match(/Confirm\s+Date\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
         let inDate = '';
         if (confirmMatch) {
@@ -1480,7 +1214,6 @@ async function handlePdfUpload(e) {
           inDate = parts[2] + '-' + parts[0].padStart(2,'0') + '-' + parts[1].padStart(2,'0');
         }
 
-        // Find SKU positions in this section
         const skuHits2 = [];
         const skuRe2 = /(\d{4,8}-\d{2,4})\s+([\s\S]{5,300}?)\s+(?:\d+\.?\d*\s+)?Pallet/g;
         let sm2;
@@ -1488,7 +1221,6 @@ async function handlePdfUpload(e) {
           skuHits2.push({ pos: sm2.index, sku: sm2[1].trim(), description: sm2[2].replace(/\s+/g, ' ').replace(/\s*\(\d+\)\s*$/, '').trim() });
         }
 
-        // Find pallet IDs in this section
         const palRe2 = /(?:Loc:[^\n]*)?\s*Pallet\s*[:\-]?\s*(\d{4,6})/gi;
         let pm2;
         while ((pm2 = palRe2.exec(section)) !== null) {
@@ -1508,7 +1240,7 @@ async function handlePdfUpload(e) {
       showImportModal(`View Transaction PDF · ${txnPositions.length} txn(s) · ${importRows.length} pallets · Confirm Date used as In Date`, false, '');
 
     } else {
-      // ── Receive Summary Ticket format ──
+
       const txnMatch = fullText.match(/Transaction\s*#\s*[:\-]?\s*(\d+)/i);
       const txnNumber = txnMatch ? txnMatch[1].trim() : '';
       const dateMatch = fullText.match(/Creation\s+Date\s*[:\-]?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
@@ -1525,23 +1257,20 @@ async function handlePdfUpload(e) {
         skuHits.push({ pos: sm.index, sku: sm[1].trim(), description: sm[2].replace(/\s+/g, ' ').replace(/\s*\(\d+\)\s*$/, '').trim() });
       }
 
-      // Primary: standard "Pallet: XXXXX" pattern
       const palletHits = [];
       const palRe = /Pallet\s*[:\-]\s*(\d{4,6})/gi;
       let pm;
       while ((pm = palRe.exec(fullText)) !== null) palletHits.push({ pos: pm.index, id: pm[1] });
 
-      // Secondary: catch "Loc:" format where pallet number appears on its own line
-      // Lines that are ONLY a 5-6 digit number after a Details: Loc: context
       const lines = fullText.split('\n');
       for (let i = 0; i < lines.length; i++) {
         const trimmed = lines[i].trim();
         if (/^\d{4,6}$/.test(trimmed)) {
-          // Check if any of the 4 preceding lines contain "Loc:" (indicates Loc: pallet format)
+
           const prevCtx = lines.slice(Math.max(0, i-4), i).join(' ');
           if (/Loc:/i.test(prevCtx) || /Details:/i.test(prevCtx)) {
             const id = trimmed;
-            // Find approximate position in fullText for SKU association
+
             const approxPos = fullText.indexOf('\n' + id + '\n') !== -1
               ? fullText.indexOf('\n' + id + '\n')
               : fullText.indexOf(id);
@@ -1560,7 +1289,6 @@ async function handlePdfUpload(e) {
       for (const ph of palletHits) { if (!seen.has(ph.id)) { seen.add(ph.id); palletIds.push(ph.id); } }
       if (!palletIds.length) throw new Error('No pallet IDs found. Make sure this is a Receive Summary Ticket.');
 
-      // Check expected total from "Totals: XX" line in PDF
       const totalsMatch = fullText.match(/Totals\s*[:\-]?\s*(\d+)/i);
       const expectedTotal = totalsMatch ? parseInt(totalsMatch[1]) : null;
 
@@ -1581,13 +1309,12 @@ async function handlePdfUpload(e) {
   }
 }
 
-// ── Excel Import ───────────────────────────────────────
 let importRows = [];
 
 function handleExcelUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
-  e.target.value = ''; // reset so same file can be re-uploaded
+  e.target.value = '';
   const reader = new FileReader();
   reader.onload = function(ev) {
     try {
@@ -1659,7 +1386,6 @@ function showImportModal(subtitle, isPdf, pdfDate, expectedTotal, defaultTxn, de
     (dup ? ` &nbsp;·&nbsp; <span style="color:var(--amber-text)">${dup} duplicates</span>` : '') +
     (err ? ` &nbsp;·&nbsp; <span style="color:var(--red-text)">${err} invalid</span>` : '');
 
-  // Show mismatch warning if expected total doesn't match
   const missingPanel = document.getElementById('import-missing-panel');
   const missingInput = document.getElementById('import-missing-input');
   if (expectedTotal && importRows.length < expectedTotal) {
@@ -1672,7 +1398,6 @@ function showImportModal(subtitle, isPdf, pdfDate, expectedTotal, defaultTxn, de
     missingPanel.style.display = 'none';
   }
 
-  // Date override row — only for single-date PDF imports
   const dateRow = document.getElementById('import-date-row');
   if (isPdf && pdfDate) {
     document.getElementById('import-pdf-date').textContent = pdfDate;
@@ -1690,10 +1415,9 @@ function showImportModal(subtitle, isPdf, pdfDate, expectedTotal, defaultTxn, de
 
 function addMissingIds() {
   const input = document.getElementById('import-missing-input').value;
-  // Parse IDs: split by comma, space, newline
+
   const ids = input.split(/[\s,\n]+/).map(s => s.trim()).filter(s => /^\d{4,6}$/.test(s));
-  // Re-render with current importRows + any new IDs added as previews
-  // Update the summary to show how many will be added
+
   const newCount = ids.filter(id => !importRows.find(r => r.id === id) && !pallets.find(p => String(p.id) === id)).length;
   const dupCount = ids.filter(id => pallets.find(p => String(p.id) === id)).length;
   const msg = document.getElementById('import-missing-msg');
@@ -1701,7 +1425,7 @@ function addMissingIds() {
   if (ids.length > 0) {
     msg.textContent = base + ` — ${newCount} new IDs ready, ${dupCount} duplicates`;
   }
-  // Store for use in confirmImport
+
   window._missingIds = ids;
 }
 
@@ -1726,7 +1450,7 @@ function renderImportRows() {
 function updateImportDates() {
   const newDate = document.getElementById('import-date-override').value;
   if (!newDate) return;
-  // Update all non-error rows with the new date, re-check for duplicates
+
   importRows = importRows.map(r => {
     if (r.status === 'err' && r.statusText !== '⚠ Duplicate ID') return r;
     const isDup = pallets.find(p => String(p.id) === String(r.id));
@@ -1746,7 +1470,6 @@ function closeImportModal() {
 async function confirmImport() {
   const toAdd = importRows.filter(r => r.status === 'ok');
 
-  // Also add any manually entered missing IDs
   const missingIds = (window._missingIds || []).filter(id =>
     !importRows.find(r => r.id === id) && !pallets.find(p => String(p.id) === id)
   );
@@ -1765,7 +1488,6 @@ async function confirmImport() {
   alert('✓ Successfully imported ' + toAdd.length + ' pallet' + (toAdd.length !== 1 ? 's' : '') + '.');
 }
 
-// ── Download Template ──────────────────────────────────
 function downloadTemplate() {
   const ws = XLSX.utils.aoa_to_sheet([
     ['Moveable ID', 'In Date (YYYY-MM-DD)', 'Transaction #', 'SKU', 'Item Description'],
@@ -1779,13 +1501,11 @@ function downloadTemplate() {
   XLSX.writeFile(wb, 'pallet-import-template.xlsx');
 }
 
-// ── Init ───────────────────────────────────────────────
 document.getElementById('inp-in').value = today();
 document.getElementById('bill-date').value = today();
 const nm = new Date();
 document.getElementById('report-month').value = nm.getFullYear() + '-' + String(nm.getMonth() + 1).padStart(2, '0');
 
-loadData();
-</script>
+loadData();</script>
 </body>
 </html>
